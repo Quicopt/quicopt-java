@@ -1,0 +1,227 @@
+// SPDX-License-Identifier: Apache-2.0
+// Changed from the original (see NOTICE): package names.
+package com.quicopt.planner.api.solver;
+
+import java.util.Collections;
+import java.util.List;
+import java.util.concurrent.CompletableFuture;
+import java.util.function.Consumer;
+
+import com.quicopt.planner.api.domain.solution.PlanningSolution;
+import com.quicopt.planner.api.solver.change.ProblemChange;
+import com.quicopt.planner.api.solver.event.BestSolutionChangedEvent;
+import com.quicopt.planner.config.solver.SolverConfig;
+import com.quicopt.planner.config.solver.SolverManagerConfig;
+import com.quicopt.planner.impl.solver.DefaultSolverManager;
+
+import org.jspecify.annotations.NullMarked;
+import org.jspecify.annotations.Nullable;
+
+/**
+ * A SolverManager solves multiple planning problems of the same domain,
+ * asynchronously without blocking the calling thread.
+ * <p>
+ * To create a SolverManager, use {@link #create(SolverFactory, SolverManagerConfig)}.
+ * To solve a planning problem, call {@link #solve(Object, Object, Consumer)}
+ * or {@link #solveAndListen(Object, Object, Consumer)}.
+ * <p>
+ * These methods are thread-safe unless explicitly stated otherwise.
+ * <p>
+ * Internally a SolverManager manages a thread pool of solver threads (which call {@link Solver#solve(Object)})
+ * and consumer threads (to handle the {@link BestSolutionChangedEvent}s).
+ * <p>
+ * To learn more about problem change semantics, please refer to the {@link ProblemChange} Javadoc.
+ *
+ * @param <Solution_> the solution type, the class with the {@link PlanningSolution} annotation
+ */
+@NullMarked
+public interface SolverManager<Solution_> extends AutoCloseable {
+
+    // ************************************************************************
+    // Static creation methods: SolverConfig and SolverFactory
+    // ************************************************************************
+
+    /**
+     * Use a {@link SolverConfig} to build a {@link SolverManager}.
+     * <p>
+     * When using {@link SolutionManager} too, use {@link #create(SolverFactory)} instead
+     * so they reuse the same {@link SolverFactory} instance.
+     *
+     * @param <Solution_> the solution type, the class with the {@link PlanningSolution} annotation
+     */
+    static <Solution_> SolverManager<Solution_> create(SolverConfig solverConfig) {
+        return create(solverConfig, new SolverManagerConfig());
+    }
+
+    /**
+     * Use a {@link SolverConfig} and a {@link SolverManagerConfig} to build a {@link SolverManager}.
+     * <p>
+     * When using {@link SolutionManager} too, use {@link #create(SolverFactory, SolverManagerConfig)} instead
+     * so they reuse the same {@link SolverFactory} instance.
+     *
+     * @param <Solution_> the solution type, the class with the {@link PlanningSolution} annotation
+     */
+    static <Solution_> SolverManager<Solution_> create(SolverConfig solverConfig, SolverManagerConfig solverManagerConfig) {
+        return create(SolverFactory.create(solverConfig), solverManagerConfig);
+    }
+
+    /**
+     * Use a {@link SolverFactory} to build a {@link SolverManager}.
+     *
+     * @param <Solution_> the solution type, the class with the {@link PlanningSolution} annotation
+     */
+    static <Solution_> SolverManager<Solution_> create(SolverFactory<Solution_> solverFactory) {
+        return create(solverFactory, new SolverManagerConfig());
+    }
+
+    /**
+     * Use a {@link SolverFactory} and a {@link SolverManagerConfig} to build a {@link SolverManager}.
+     *
+     * @param <Solution_> the solution type, the class with the {@link PlanningSolution} annotation
+     */
+    static <Solution_> SolverManager<Solution_> create(SolverFactory<Solution_> solverFactory,
+            SolverManagerConfig solverManagerConfig) {
+        return new DefaultSolverManager<>(solverFactory, solverManagerConfig);
+    }
+
+    // ************************************************************************
+    // Builder method
+    // ************************************************************************
+
+    /**
+     * Creates a Builder that allows to customize and submit a planning problem to solve.
+     *
+     */
+    SolverJobBuilder<Solution_> solveBuilder();
+
+    // ************************************************************************
+    // Interface methods
+    // ************************************************************************
+
+    /**
+     * Submits a planning problem to solve and returns immediately.
+     * The planning problem is solved on a solver {@link Thread}, as soon as one is available.
+     * To retrieve the final best solution, use {@link SolverJob#getFinalBestSolution()}.
+     * <p>
+     * In server applications, it's recommended to use {@link #solve(Object, Object, Consumer)} instead,
+     * to avoid loading the problem going stale if solving can't start immediately.
+     * To listen to intermediate best solutions too, use {@link #solveAndListen(Object, Object, Consumer)} instead.
+     * <p>
+     * Defaults to logging exceptions as an error.
+     * <p>
+     * To stop a solver job before it naturally terminates, call {@link SolverJob#terminateEarly()}.
+     *
+     * @param problemId a ID for each planning problem. This must be unique.
+     *        Use this problemId to {@link #terminateEarly(Object) terminate} the solver early,
+     * @param problem a {@link PlanningSolution} usually with uninitialized planning variables
+     */
+    default SolverJob<Solution_> solve(Object problemId, Solution_ problem) {
+        return solveBuilder().withProblemId(problemId).withProblem(problem).run();
+    }
+
+    /**
+     * As defined by {@link #solve(Object, Object)}.
+     *
+     * @param problemId a ID for each planning problem. This must be unique.
+     *        Use this problemId to {@link #terminateEarly(Object) terminate} the solver early,
+     *        {@link #getSolverStatus(Object) to get the status} or if the problem changes while solving.
+     * @param problem a {@link PlanningSolution} usually with uninitialized planning variables
+     * @param finalBestSolutionConsumer called only once, at the end, on a consumer thread
+     */
+    default SolverJob<Solution_> solve(Object problemId, Solution_ problem,
+            @Nullable Consumer<? super Solution_> finalBestSolutionConsumer) {
+        var builder = solveBuilder().withProblemId(problemId).withProblem(problem);
+        if (finalBestSolutionConsumer != null) {
+            builder.withFinalBestSolutionEventConsumer(event -> finalBestSolutionConsumer.accept(event.solution()));
+        }
+        return builder.run();
+    }
+
+    /**
+     * Submits a planning problem to solve and returns immediately.
+     * The planning problem is solved on a solver {@link Thread}, as soon as one is available.
+     * <p>
+     * When the solver finds a new best solution, the {@code bestSolutionConsumer} is called every time,
+     * on a consumer {@link Thread}, as soon as one is available (taking into account any throttling waiting time),
+     * unless a newer best solution is already available by then (in which case skip ahead discards it).
+     * <p>
+     * Defaults to logging exceptions as an error.
+     * <p>
+     * To stop a solver job before it naturally terminates, call {@link #terminateEarly(Object)}.
+     *
+     * @param problemId a ID for each planning problem. This must be unique.
+     *        Use this problemId to {@link #terminateEarly(Object) terminate} the solver early,
+     *        {@link #getSolverStatus(Object) to get the status} or if the problem changes while solving.
+     * @param problem a {@link PlanningSolution} usually with uninitialized planning variables
+     * @param bestSolutionConsumer called multiple times, on a consumer thread
+     */
+    default SolverJob<Solution_> solveAndListen(Object problemId, Solution_ problem,
+            Consumer<? super Solution_> bestSolutionConsumer) {
+        return solveBuilder().withProblemId(problemId).withProblem(problem)
+                .withBestSolutionEventConsumer(event -> bestSolutionConsumer.accept(event.solution())).run();
+    }
+
+    /**
+     * Returns if the {@link Solver} is scheduled to solve, actively solving or not.
+     * <p>
+     * Returns {@link SolverStatus#NOT_SOLVING} if the solver already terminated or if the problemId was never added.
+     * To distinguish between both cases, use {@link SolverJob#getSolverStatus()} instead.
+     * Here, that distinction is not supported because it would cause a memory leak.
+     *
+     * @param problemId a value given to {@link #solve(Object, Object, Consumer)}
+     *        or {@link #solveAndListen(Object, Object, Consumer)}
+     */
+    SolverStatus getSolverStatus(Object problemId);
+
+    /**
+     * As defined by {@link #addProblemChanges(Object, List)}, only with a single {@link ProblemChange}.
+     * Prefer to submit multiple {@link ProblemChange}s at once to reduce the considerable overhead of multiple calls.
+     */
+    default CompletableFuture<Void> addProblemChange(Object problemId, ProblemChange<Solution_> problemChange) {
+        return addProblemChanges(problemId, Collections.singletonList(problemChange));
+    }
+
+    /**
+     * Schedules a batch of {@link ProblemChange problem changes} to be processed
+     * by the underlying {@link Solver} and returns immediately.
+     * If the solver already terminated or the problemId was never added, throws an exception.
+     * The same applies if the underlying {@link Solver} is not in the {@link SolverStatus#SOLVING_ACTIVE} state.
+     *
+     * @param problemId a value given to {@link #solve(Object, Object, Consumer)}
+     *        or {@link #solveAndListen(Object, Object, Consumer)}
+     * @param problemChangeList a list of {@link ProblemChange}s to apply to the problem
+     * @return completes after the best solution containing this change has been consumed.
+     * @throws IllegalStateException if there is no solver actively solving the problem associated with the problemId
+     * @see ProblemChange Learn more about problem change semantics.
+     */
+    CompletableFuture<Void> addProblemChanges(Object problemId, List<ProblemChange<Solution_>> problemChangeList);
+
+    /**
+     * Terminates the solver or cancels the solver job if it hasn't (re)started yet.
+     * <p>
+     * Does nothing if the solver already terminated or the problemId was never added.
+     * To distinguish between both cases, use {@link SolverJob#terminateEarly()} instead.
+     * Here, that distinction is not supported because it would cause a memory leak.
+     * <p>
+     * Waits for the termination or cancellation to complete before returning.
+     * During termination, a {@code bestSolutionConsumer} could still be called. When the solver terminates,
+     * the {@code finalBestSolutionConsumer} is executed with the latest best solution.
+     * These consumers run on a consumer thread independently of the termination and may still run even after
+     * this method returns.
+     *
+     * @param problemId a value given to {@link #solve(Object, Object, Consumer)}
+     *        or {@link #solveAndListen(Object, Object, Consumer)}
+     */
+    void terminateEarly(Object problemId);
+
+    /**
+     * Terminates all solvers, cancels all solver jobs that haven't (re)started yet
+     * and discards all queued {@link ProblemChange}s.
+     * Releases all thread pool resources.
+     * <p>
+     * No new planning problems can be submitted after calling this method.
+     */
+    @Override
+    void close();
+
+}

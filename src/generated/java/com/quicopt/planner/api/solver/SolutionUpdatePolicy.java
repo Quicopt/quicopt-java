@@ -1,0 +1,79 @@
+// SPDX-License-Identifier: Apache-2.0
+// Changed from the original (see NOTICE): package names, documentation.
+package com.quicopt.planner.api.solver;
+
+
+/**
+ * To fully de-normalize a planning solution freshly loaded from persistent storage,
+ * two operations need to happen:
+ *
+ * <ul>
+ * <li>Shadow variable updates need to run,
+ * reading the state of all entities and computing values for their shadow variables.</li>
+ * <li>Score needs to be calculated and stored on the planning solution.</li>
+ * </ul>
+ *
+ * <p>
+ * Each of these operations has its own performance cost,
+ * and for certain use cases, only one of them may be actually necessary.
+ * Advanced users therefore get a choice of which to perform.
+ *
+ * <p>
+ * If unsure, pick {@link #UPDATE_ALL}.
+ *
+ */
+public enum SolutionUpdatePolicy {
+
+    /**
+     * Combines the effects of {@link #UPDATE_SCORE_ONLY} and {@link #UPDATE_SHADOW_VARIABLES_ONLY},
+     * in effect fully updating the solution.
+     */
+    UPDATE_ALL(true, true),
+    /**
+     * Calculates the score based on the entities in the solution,
+     * and writes it back to the solution.
+     * Does not update shadow variables,
+     * making the user responsible for ensuring that all shadow variables are mutually consistent.
+     * Otherwise the results of the computation are undefined,
+     * and may range from the wrong score being computed to runtime exceptions being thrown.
+     * To avoid this issue, use {@link #UPDATE_ALL} instead,
+     * which will update shadow variables to their correct values first.
+     */
+    UPDATE_SCORE_ONLY(true, false),
+    /**
+     * Updates shadow variables on all planning entities and problem facts.
+     * Does not update score;
+     * the solution will keep the current score, even if it is stale or null.
+     * To avoid this, use {@link #UPDATE_ALL} instead.
+     */
+    UPDATE_SHADOW_VARIABLES_ONLY(false, true),
+    /**
+     * Does not run anything.
+     * Improves performance during {@link SolutionManager#analyze(Object, ScoreAnalysisFetchPolicy, SolutionUpdatePolicy)},
+     * where the user can guarantee that the solution is already up to date.
+     * Otherwise serves no purpose.
+     */
+    NO_UPDATE(false, false);
+
+    private final boolean scoreUpdateEnabled;
+    private final boolean shadowVariableUpdateEnabled;
+
+    SolutionUpdatePolicy(boolean scoreUpdateEnabled, boolean shadowVariableUpdateEnabled) {
+        this.scoreUpdateEnabled = scoreUpdateEnabled;
+        this.shadowVariableUpdateEnabled = shadowVariableUpdateEnabled;
+    }
+
+    public boolean isScoreUpdateEnabled() {
+        return scoreUpdateEnabled;
+    }
+
+    /**
+     * If this is true, shadow variable updates will ignore certain fail-fasts.
+     * See {@code InnerScoreDirector#expectShadowVariablesInCorrectState()}.
+     *
+     * @return true if shadow variables should be updated
+     */
+    public boolean isShadowVariableUpdateEnabled() {
+        return shadowVariableUpdateEnabled;
+    }
+}

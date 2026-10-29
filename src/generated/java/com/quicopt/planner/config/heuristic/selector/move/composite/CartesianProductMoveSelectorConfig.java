@@ -1,0 +1,165 @@
+// SPDX-License-Identifier: Apache-2.0
+// Changed from the original (see NOTICE): package names.
+package com.quicopt.planner.config.heuristic.selector.move.composite;
+
+import java.util.Arrays;
+import java.util.List;
+import java.util.function.Consumer;
+
+import jakarta.xml.bind.annotation.XmlElement;
+import jakarta.xml.bind.annotation.XmlElements;
+import jakarta.xml.bind.annotation.XmlType;
+
+import com.quicopt.planner.config.heuristic.selector.move.MoveSelectorConfig;
+import com.quicopt.planner.config.heuristic.selector.move.factory.MoveIteratorFactoryConfig;
+import com.quicopt.planner.config.heuristic.selector.move.factory.MoveListFactoryConfig;
+import com.quicopt.planner.config.heuristic.selector.move.generic.ChangeMoveSelectorConfig;
+import com.quicopt.planner.config.heuristic.selector.move.generic.MultistageMoveSelectorConfig;
+import com.quicopt.planner.config.heuristic.selector.move.generic.PillarChangeMoveSelectorConfig;
+import com.quicopt.planner.config.heuristic.selector.move.generic.PillarSwapMoveSelectorConfig;
+import com.quicopt.planner.config.heuristic.selector.move.generic.RuinRecreateMoveSelectorConfig;
+import com.quicopt.planner.config.heuristic.selector.move.generic.SwapMoveSelectorConfig;
+import com.quicopt.planner.config.heuristic.selector.move.generic.list.ListChangeMoveSelectorConfig;
+import com.quicopt.planner.config.heuristic.selector.move.generic.list.ListMultistageMoveSelectorConfig;
+import com.quicopt.planner.config.heuristic.selector.move.generic.list.ListRuinRecreateMoveSelectorConfig;
+import com.quicopt.planner.config.heuristic.selector.move.generic.list.ListSwapMoveSelectorConfig;
+import com.quicopt.planner.config.heuristic.selector.move.generic.list.SubListChangeMoveSelectorConfig;
+import com.quicopt.planner.config.heuristic.selector.move.generic.list.SubListSwapMoveSelectorConfig;
+import com.quicopt.planner.config.heuristic.selector.move.generic.list.kopt.KOptListMoveSelectorConfig;
+import com.quicopt.planner.config.util.ConfigUtils;
+
+import org.jspecify.annotations.NonNull;
+import org.jspecify.annotations.Nullable;
+
+@XmlType(propOrder = {
+        "moveSelectorConfigList",
+        "ignoreEmptyChildIterators"
+})
+public final class CartesianProductMoveSelectorConfig extends MoveSelectorConfig<CartesianProductMoveSelectorConfig> {
+
+    public static final String XML_ELEMENT_NAME = "cartesianProductMoveSelector";
+
+    @XmlElements({
+            @XmlElement(name = CartesianProductMoveSelectorConfig.XML_ELEMENT_NAME,
+                    type = CartesianProductMoveSelectorConfig.class),
+            @XmlElement(name = ChangeMoveSelectorConfig.XML_ELEMENT_NAME, type = ChangeMoveSelectorConfig.class),
+            @XmlElement(name = KOptListMoveSelectorConfig.XML_ELEMENT_NAME, type = KOptListMoveSelectorConfig.class),
+            @XmlElement(name = ListChangeMoveSelectorConfig.XML_ELEMENT_NAME, type = ListChangeMoveSelectorConfig.class),
+            @XmlElement(name = ListSwapMoveSelectorConfig.XML_ELEMENT_NAME, type = ListSwapMoveSelectorConfig.class),
+            @XmlElement(name = MoveIteratorFactoryConfig.XML_ELEMENT_NAME, type = MoveIteratorFactoryConfig.class),
+            @XmlElement(name = MoveListFactoryConfig.XML_ELEMENT_NAME, type = MoveListFactoryConfig.class),
+            @XmlElement(name = PillarChangeMoveSelectorConfig.XML_ELEMENT_NAME,
+                    type = PillarChangeMoveSelectorConfig.class),
+            @XmlElement(name = PillarSwapMoveSelectorConfig.XML_ELEMENT_NAME, type = PillarSwapMoveSelectorConfig.class),
+            @XmlElement(name = RuinRecreateMoveSelectorConfig.XML_ELEMENT_NAME,
+                    type = RuinRecreateMoveSelectorConfig.class),
+            @XmlElement(name = ListRuinRecreateMoveSelectorConfig.XML_ELEMENT_NAME,
+                    type = ListRuinRecreateMoveSelectorConfig.class),
+            @XmlElement(name = MultistageMoveSelectorConfig.XML_ELEMENT_NAME,
+                    type = MultistageMoveSelectorConfig.class),
+            @XmlElement(name = ListMultistageMoveSelectorConfig.XML_ELEMENT_NAME,
+                    type = ListMultistageMoveSelectorConfig.class),
+            @XmlElement(name = SubListChangeMoveSelectorConfig.XML_ELEMENT_NAME, type = SubListChangeMoveSelectorConfig.class),
+            @XmlElement(name = SubListSwapMoveSelectorConfig.XML_ELEMENT_NAME, type = SubListSwapMoveSelectorConfig.class),
+            @XmlElement(name = SwapMoveSelectorConfig.XML_ELEMENT_NAME, type = SwapMoveSelectorConfig.class),
+            @XmlElement(name = UnionMoveSelectorConfig.XML_ELEMENT_NAME, type = UnionMoveSelectorConfig.class)
+    })
+    private List<MoveSelectorConfig> moveSelectorConfigList = null;
+
+    private Boolean ignoreEmptyChildIterators = null;
+
+    // ************************************************************************
+    // Constructors and simple getters/setters
+    // ************************************************************************
+
+    public CartesianProductMoveSelectorConfig() {
+    }
+
+    public CartesianProductMoveSelectorConfig(@NonNull List<@NonNull MoveSelectorConfig> moveSelectorConfigList) {
+        this.moveSelectorConfigList = moveSelectorConfigList;
+    }
+
+    public @Nullable List<@NonNull MoveSelectorConfig> getMoveSelectorList() {
+        return moveSelectorConfigList;
+    }
+
+    public void setMoveSelectorList(@Nullable List<@NonNull MoveSelectorConfig> moveSelectorConfigList) {
+        this.moveSelectorConfigList = moveSelectorConfigList;
+    }
+
+    public @Nullable Boolean getIgnoreEmptyChildIterators() {
+        return ignoreEmptyChildIterators;
+    }
+
+    public void setIgnoreEmptyChildIterators(@Nullable Boolean ignoreEmptyChildIterators) {
+        this.ignoreEmptyChildIterators = ignoreEmptyChildIterators;
+    }
+
+    // ************************************************************************
+    // With methods
+    // ************************************************************************
+
+    public @NonNull CartesianProductMoveSelectorConfig
+            withMoveSelectorList(@NonNull List<@NonNull MoveSelectorConfig> moveSelectorConfigList) {
+        this.moveSelectorConfigList = moveSelectorConfigList;
+        return this;
+    }
+
+    public @NonNull CartesianProductMoveSelectorConfig
+            withMoveSelectors(@NonNull MoveSelectorConfig @NonNull... moveSelectorConfigs) {
+        this.moveSelectorConfigList = Arrays.asList(moveSelectorConfigs);
+        return this;
+    }
+
+    public @NonNull CartesianProductMoveSelectorConfig
+            withIgnoreEmptyChildIterators(@NonNull Boolean ignoreEmptyChildIterators) {
+        this.ignoreEmptyChildIterators = ignoreEmptyChildIterators;
+        return this;
+    }
+
+    // ************************************************************************
+    // Worker methods
+    // ************************************************************************
+
+    @Override
+    public void extractLeafMoveSelectorConfigsIntoList(@NonNull List<@NonNull MoveSelectorConfig> leafMoveSelectorConfigList) {
+        for (MoveSelectorConfig moveSelectorConfig : moveSelectorConfigList) {
+            moveSelectorConfig.extractLeafMoveSelectorConfigsIntoList(leafMoveSelectorConfigList);
+        }
+    }
+
+    @Override
+    public @NonNull CartesianProductMoveSelectorConfig inherit(@NonNull CartesianProductMoveSelectorConfig inheritedConfig) {
+        super.inherit(inheritedConfig);
+        moveSelectorConfigList =
+                ConfigUtils.inheritMergeableListConfig(moveSelectorConfigList, inheritedConfig.getMoveSelectorList());
+        ignoreEmptyChildIterators = ConfigUtils.inheritOverwritableProperty(
+                ignoreEmptyChildIterators, inheritedConfig.getIgnoreEmptyChildIterators());
+        return this;
+    }
+
+    @Override
+    public @NonNull CartesianProductMoveSelectorConfig copyConfig() {
+        return new CartesianProductMoveSelectorConfig().inherit(this);
+    }
+
+    @Override
+    public void visitReferencedClasses(@NonNull Consumer<Class<?>> classVisitor) {
+        visitCommonReferencedClasses(classVisitor);
+        if (moveSelectorConfigList != null) {
+            moveSelectorConfigList.forEach(ms -> ms.visitReferencedClasses(classVisitor));
+        }
+    }
+
+    @Override
+    public boolean hasNearbySelectionConfig() {
+        return moveSelectorConfigList != null
+                && moveSelectorConfigList.stream().anyMatch(MoveSelectorConfig::hasNearbySelectionConfig);
+    }
+
+    @Override
+    public String toString() {
+        return getClass().getSimpleName() + "(" + moveSelectorConfigList + ")";
+    }
+
+}

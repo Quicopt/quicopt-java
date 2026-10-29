@@ -1,0 +1,37 @@
+// SPDX-License-Identifier: Apache-2.0
+// Changed from the original (see NOTICE): package names.
+package com.quicopt.planner.impl.partitionedsearch.partitioner;
+
+import java.util.List;
+
+import com.quicopt.planner.api.domain.common.PlanningId;
+import com.quicopt.planner.api.domain.entity.PlanningEntity;
+import com.quicopt.planner.api.domain.solution.PlanningSolution;
+import com.quicopt.planner.api.domain.solution.cloner.SolutionCloner;
+
+/**
+ * Splits one {@link PlanningSolution solution} into multiple partitions.
+ * The partitions are solved and merged based on {@link PlanningId}.
+ * <p>
+ * To add custom properties, configure custom properties and add public setters for them.
+ *
+ * @param <Solution_> the solution type, the class with the {@link PlanningSolution} annotation
+ */
+public interface SolutionPartitioner<Solution_> {
+
+    /**
+     * Returns a list of partition cloned {@link PlanningSolution solutions}
+     * for which each {@link PlanningEntity planning entity}
+     * is partition cloned into exactly 1 of those partitions.
+     * Problem facts can be multiple partitions (with our without cloning).
+     * <p>
+     * Any class that is {@link SolutionCloner solution cloned} must also be partitioned cloned.
+     * A class can be partition cloned without being solution cloned.
+     *
+     * @param workingSolution the original solution to split; must not be modified by this method.
+     * @param runnablePartThreadLimit null if unlimited, never negative
+     * @return never null, {@link List#size()} of at least 1.
+     */
+    List<Solution_> splitWorkingSolution(Solution_ workingSolution, Integer runnablePartThreadLimit);
+
+}

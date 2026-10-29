@@ -1,0 +1,48 @@
+// SPDX-License-Identifier: Apache-2.0
+// Changed from the original (see NOTICE): package names.
+package com.quicopt.planner.api.score.stream.bi;
+
+import java.util.function.Function;
+import java.util.function.Supplier;
+
+import com.quicopt.planner.api.function.TriFunction;
+import com.quicopt.planner.api.score.stream.ConstraintCollectors;
+import com.quicopt.planner.api.score.stream.ConstraintStream;
+import com.quicopt.planner.api.score.stream.uni.UniConstraintCollector;
+
+import org.jspecify.annotations.NullMarked;
+import org.jspecify.annotations.Nullable;
+
+/**
+ * As described by {@link UniConstraintCollector}, only for {@link BiConstraintStream}.
+ *
+ * @param <A> the type of the first fact of the tuple in the source {@link BiConstraintStream}
+ * @param <B> the type of the second fact of the tuple in the source {@link BiConstraintStream}
+ * @param <ResultContainer_> the mutable accumulation type (often hidden as an implementation detail)
+ * @param <Result_> the type of the fact of the tuple in the destination {@link ConstraintStream}
+ *        It is recommended that this type be deeply immutable.
+ *        Not following this recommendation may lead to hard-to-debug hashing issues down the stream,
+ *        especially if this value is ever used as a group key.
+ * @see ConstraintCollectors
+ */
+@NullMarked
+public interface BiConstraintCollector<A, B, ResultContainer_, Result_> {
+
+    /**
+     * As defined by {@link UniConstraintCollector#supplier()}, but for {@link BiConstraintStream}.
+     */
+    Supplier<ResultContainer_> supplier();
+
+    /**
+     * As defined by {@link UniConstraintCollector#accumulator()}, but for {@link BiConstraintStream}.
+     * 
+     * @see BiConstraintCollectorAccumulator An incremental API to be returned instead of the deprecated plain tri-function.
+     */
+    TriFunction<ResultContainer_, A, B, Runnable> accumulator();
+
+    /**
+     * As defined by {@link UniConstraintCollector#finisher()}, but for {@link BiConstraintStream}.
+     */
+    Function<ResultContainer_, @Nullable Result_> finisher();
+
+}

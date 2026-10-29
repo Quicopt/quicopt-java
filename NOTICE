@@ -1,0 +1,11 @@
+quicopt-planner
+Copyright (c) 2026 Tim Bode, PGI-12, Forschungszentrum Jülich
+
+This product includes software derived from Timefold Solver
+(https://github.com/TimefoldAI/timefold-solver), version 2.7.0,
+licensed under the Apache License, Version 2.0, which is in LICENSE.
+
+The packages com.quicopt.planner.api and com.quicopt.planner.config, and
+the files of com.quicopt.planner.impl and com.quicopt.planner.preview that
+say so at their top, are copied from Timefold Solver's core module and
+changed. Each copied file says at its top what was changed.

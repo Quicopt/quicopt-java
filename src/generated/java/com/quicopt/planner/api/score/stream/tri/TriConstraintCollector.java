@@ -1,0 +1,49 @@
+// SPDX-License-Identifier: Apache-2.0
+// Changed from the original (see NOTICE): package names.
+package com.quicopt.planner.api.score.stream.tri;
+
+import java.util.function.Function;
+import java.util.function.Supplier;
+
+import com.quicopt.planner.api.function.QuadFunction;
+import com.quicopt.planner.api.score.stream.ConstraintCollectors;
+import com.quicopt.planner.api.score.stream.ConstraintStream;
+import com.quicopt.planner.api.score.stream.uni.UniConstraintCollector;
+
+import org.jspecify.annotations.NullMarked;
+import org.jspecify.annotations.Nullable;
+
+/**
+ * As described by {@link UniConstraintCollector}, only for {@link TriConstraintStream}.
+ *
+ * @param <A> the type of the first fact of the tuple in the source {@link TriConstraintStream}
+ * @param <B> the type of the second fact of the tuple in the source {@link TriConstraintStream}
+ * @param <C> the type of the third fact of the tuple in the source {@link TriConstraintStream}
+ * @param <ResultContainer_> the mutable accumulation type (often hidden as an implementation detail)
+ * @param <Result_> the type of the fact of the tuple in the destination {@link ConstraintStream}
+ *        It is recommended that this type be deeply immutable.
+ *        Not following this recommendation may lead to hard-to-debug hashing issues down the stream,
+ *        especially if this value is ever used as a group key.
+ * @see ConstraintCollectors
+ */
+@NullMarked
+public interface TriConstraintCollector<A, B, C, ResultContainer_, Result_> {
+
+    /**
+     * As defined by {@link UniConstraintCollector#supplier()}, but for {@link TriConstraintStream}.
+     */
+    Supplier<ResultContainer_> supplier();
+
+    /**
+     * As defined by {@link UniConstraintCollector#accumulator()}, but for {@link TriConstraintStream}.
+     * 
+     * @see TriConstraintCollectorAccumulator An incremental API to be returned instead of the deprecated plain quad-function.
+     */
+    QuadFunction<ResultContainer_, A, B, C, Runnable> accumulator();
+
+    /**
+     * As defined by {@link UniConstraintCollector#finisher()}, but for {@link TriConstraintStream}.
+     */
+    Function<ResultContainer_, @Nullable Result_> finisher();
+
+}

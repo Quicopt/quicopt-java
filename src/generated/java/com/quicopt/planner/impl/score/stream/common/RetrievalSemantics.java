@@ -1,0 +1,44 @@
+// SPDX-License-Identifier: Apache-2.0
+// Changed from the original (see NOTICE): package names.
+package com.quicopt.planner.impl.score.stream.common;
+
+import com.quicopt.planner.api.domain.variable.PlanningVariable;
+import com.quicopt.planner.api.score.stream.ConstraintFactory;
+import com.quicopt.planner.api.score.stream.PrecomputeFactory;
+
+/**
+ * Determines the behavior of joins and conditional propagation
+ * based on whether they are coming off of a constraint stream started by
+ * either {@link ConstraintFactory#forEach(Class)},
+ * or {@link PrecomputeFactory#forEachUnfiltered(Class)}
+ * family of methods.
+ *
+ * <p>
+ * For classes which are not planning entities, all of their instances are always retrieved.
+ * For classes which are planning entities,
+ * the difference in behavior depends on whether they use planning variables which allow unassigned values.
+ * 
+ * @see PlanningVariable#allowsUnassigned()
+ */
+public enum RetrievalSemantics {
+
+    /**
+     * Joins do not include entities with null planning variables,
+     * unless specifically requested by join(forEachIncludingUnassigned(...)).
+     * Conditional propagation does not include null planning variables,
+     * unless specifically requested using a *IncludingUnassigned() method overload.
+     *
+     * <p>
+     * Applies when the stream comes off of a {@link ConstraintFactory#forEach(Class)} family of methods.
+     */
+    STANDARD,
+
+    /**
+     * Joins and conditional propagation always include entities with null planning variables,
+     * regardless of whether their planning variables allow unassigned values.
+     * <p>
+     * Applies when the stream comes off of a {@link PrecomputeFactory#forEachUnfiltered(Class)} family of methods.
+     */
+    PRECOMPUTE
+
+}

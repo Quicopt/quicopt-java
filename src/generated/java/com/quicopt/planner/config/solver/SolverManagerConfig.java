@@ -1,0 +1,128 @@
+// SPDX-License-Identifier: Apache-2.0
+// Changed from the original (see NOTICE): package names.
+package com.quicopt.planner.config.solver;
+
+import java.util.concurrent.ThreadFactory;
+import java.util.function.Consumer;
+
+import jakarta.xml.bind.annotation.XmlType;
+
+import com.quicopt.planner.config.AbstractConfig;
+import com.quicopt.planner.config.util.ConfigUtils;
+
+import org.jspecify.annotations.NonNull;
+import org.jspecify.annotations.Nullable;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+@XmlType(propOrder = {
+        "parallelSolverCount",
+        "threadFactoryClass"
+})
+public final class SolverManagerConfig extends AbstractConfig<SolverManagerConfig> {
+
+    public static final String PARALLEL_SOLVER_COUNT_AUTO = "AUTO";
+
+    private static final Logger LOGGER = LoggerFactory.getLogger(SolverManagerConfig.class);
+
+    private String parallelSolverCount = null;
+    private String threadFactoryClass = null;
+
+    // Future features:
+    // throttlingDelay
+    // congestionStrategy
+
+    // ************************************************************************
+    // Constructors and simple getters/setters
+    // ************************************************************************
+
+    public SolverManagerConfig() {
+    }
+
+    public @Nullable String getParallelSolverCount() {
+        return parallelSolverCount;
+    }
+
+    public void setParallelSolverCount(@Nullable String parallelSolverCount) {
+        this.parallelSolverCount = parallelSolverCount;
+    }
+
+    public @Nullable Class<? extends ThreadFactory> getThreadFactoryClass() {
+        return ConfigUtils.resolveClass(threadFactoryClass, "threadFactoryClass", this);
+    }
+
+    public void setThreadFactoryClass(@Nullable Class<? extends ThreadFactory> threadFactoryClass) {
+        this.threadFactoryClass = threadFactoryClass == null ? null : threadFactoryClass.getName();
+    }
+
+    // ************************************************************************
+    // With methods
+    // ************************************************************************
+
+    public @NonNull SolverManagerConfig withParallelSolverCount(@NonNull String parallelSolverCount) {
+        this.parallelSolverCount = parallelSolverCount;
+        return this;
+    }
+
+    public @NonNull SolverManagerConfig withThreadFactoryClass(@NonNull Class<? extends ThreadFactory> threadFactoryClass) {
+        this.threadFactoryClass = threadFactoryClass.getName();
+        return this;
+    }
+
+    // ************************************************************************
+    // Builder methods
+    // ************************************************************************
+
+    public int resolveParallelSolverCount() {
+        var availableProcessorCount = getAvailableProcessors();
+        var resolvedParallelSolverCount =
+                (parallelSolverCount == null || parallelSolverCount.equals(PARALLEL_SOLVER_COUNT_AUTO))
+                        ? resolveParallelSolverCountAutomatically(availableProcessorCount)
+                        : ConfigUtils.resolvePoolSize("parallelSolverCount", parallelSolverCount, PARALLEL_SOLVER_COUNT_AUTO);
+        if (resolvedParallelSolverCount < 1) {
+            throw new IllegalArgumentException(
+                    "The parallelSolverCount (%s) resulted in a resolvedParallelSolverCount (%d) that is lower than 1."
+                            .formatted(parallelSolverCount, resolvedParallelSolverCount));
+        }
+        if (resolvedParallelSolverCount > availableProcessorCount) {
+            LOGGER.warn("The resolvedParallelSolverCount ({}) is higher "
+                    + "than the availableProcessorCount ({}), which is counter-efficient.",
+                    resolvedParallelSolverCount, availableProcessorCount);
+            // Still allow it, to reproduce issues of a high-end server machine on a low-end developer machine
+        }
+        return resolvedParallelSolverCount;
+    }
+
+    private static int getAvailableProcessors() {
+        return Runtime.getRuntime().availableProcessors();
+    }
+
+    private static int resolveParallelSolverCountAutomatically(int availableProcessorCount) {
+        // Tweaked based on experience
+        if (availableProcessorCount < 2) {
+            return 1;
+        } else {
+            return availableProcessorCount / 2;
+        }
+    }
+
+    @Override
+    public @NonNull SolverManagerConfig inherit(@NonNull SolverManagerConfig inheritedConfig) {
+        parallelSolverCount = ConfigUtils.inheritOverwritableProperty(parallelSolverCount,
+                inheritedConfig.getParallelSolverCount());
+        threadFactoryClass = ConfigUtils.inheritOverwritableProperty(threadFactoryClass,
+                inheritedConfig.threadFactoryClass);
+        return this;
+    }
+
+    @Override
+    public @NonNull SolverManagerConfig copyConfig() {
+        return new SolverManagerConfig().inherit(this);
+    }
+
+    @Override
+    public void visitReferencedClasses(@NonNull Consumer<Class<?>> classVisitor) {
+        classVisitor.accept(getThreadFactoryClass());
+    }
+
+}

@@ -1,0 +1,169 @@
+// SPDX-License-Identifier: Apache-2.0
+// Changed from the original (see NOTICE): package names.
+package com.quicopt.planner.api.score;
+
+import static com.quicopt.planner.impl.score.ScoreUtil.HARD_LABEL;
+import static com.quicopt.planner.impl.score.ScoreUtil.SOFT_LABEL;
+import static com.quicopt.planner.impl.score.ScoreUtil.STRUCTURAL_LABEL;
+
+import java.math.BigDecimal;
+import java.util.Objects;
+
+import com.quicopt.planner.impl.score.ScoreUtil;
+
+import org.jspecify.annotations.NullMarked;
+
+/**
+ * This {@link Score} is based on 2 levels of {@link BigDecimal} constraints: hard and soft.
+ * Hard constraints have priority over soft constraints.
+ * Hard constraints determine feasibility.
+ * <p>
+ * This class is immutable.
+ *
+ * @see Score
+ */
+@NullMarked
+public record HardSoftBigDecimalScore(long structuralScore, BigDecimal hardScore,
+        BigDecimal softScore) implements Score<HardSoftBigDecimalScore> {
+
+    public static final HardSoftBigDecimalScore ZERO =
+            new HardSoftBigDecimalScore(BigDecimal.ZERO, BigDecimal.ZERO);
+    public static final HardSoftBigDecimalScore ONE_HARD =
+            new HardSoftBigDecimalScore(BigDecimal.ONE, BigDecimal.ZERO);
+    public static final HardSoftBigDecimalScore ONE_SOFT =
+            new HardSoftBigDecimalScore(BigDecimal.ZERO, BigDecimal.ONE);
+
+    public HardSoftBigDecimalScore(BigDecimal hardScore, BigDecimal softScore) {
+        this(0L, hardScore, softScore);
+    }
+
+    public static HardSoftBigDecimalScore parseScore(String scoreString) {
+        var scoreTokens = ScoreUtil.parseScoreTokens(HardSoftBigDecimalScore.class, scoreString, HARD_LABEL, SOFT_LABEL);
+        if (scoreTokens.length == 2) {
+            var hardScore = ScoreUtil.parseLevelAsBigDecimal(HardSoftBigDecimalScore.class, scoreString, scoreTokens[0]);
+            var softScore = ScoreUtil.parseLevelAsBigDecimal(HardSoftBigDecimalScore.class, scoreString, scoreTokens[1]);
+            return of(hardScore, softScore);
+        } else {
+            var structuralScore = ScoreUtil.parseLevelAsLong(HardSoftBigDecimalScore.class, scoreString, scoreTokens[0]);
+            var hardScore = ScoreUtil.parseLevelAsBigDecimal(HardSoftBigDecimalScore.class, scoreString, scoreTokens[1]);
+            var softScore = ScoreUtil.parseLevelAsBigDecimal(HardSoftBigDecimalScore.class, scoreString, scoreTokens[2]);
+            return new HardSoftBigDecimalScore(structuralScore, hardScore, softScore);
+        }
+    }
+
+    public static HardSoftBigDecimalScore of(BigDecimal hardScore, BigDecimal softScore) {
+        // Optimization for frequently seen values.
+        if (ScoreUtil.isZero(hardScore) && ScoreUtil.isZero(softScore)) {
+            return ZERO;
+        }
+        // Every other case is constructed.
+        return new HardSoftBigDecimalScore(hardScore, softScore);
+    }
+
+    public static HardSoftBigDecimalScore ofHard(BigDecimal hardScore) {
+        // Optimization for frequently seen values.
+        if (ScoreUtil.isZero(hardScore)) {
+            return ZERO;
+        }
+        // Every other case is constructed.
+        return new HardSoftBigDecimalScore(hardScore, BigDecimal.ZERO);
+    }
+
+    public static HardSoftBigDecimalScore ofSoft(BigDecimal softScore) {
+        // Optimization for frequently seen values.
+        if (ScoreUtil.isZero(softScore)) {
+            return ZERO;
+        }
+        // Every other case is constructed.
+        return new HardSoftBigDecimalScore(BigDecimal.ZERO, softScore);
+    }
+
+    @Override
+    public boolean isFeasible() {
+        return structuralScore >= 0 && !ScoreUtil.isNegative(hardScore);
+    }
+
+    @Override
+    public HardSoftBigDecimalScore add(HardSoftBigDecimalScore addend) {
+        return of(hardScore.add(addend.hardScore()),
+                softScore.add(addend.softScore()));
+    }
+
+    @Override
+    public HardSoftBigDecimalScore subtract(HardSoftBigDecimalScore subtrahend) {
+        return of(hardScore.subtract(subtrahend.hardScore()),
+                softScore.subtract(subtrahend.softScore()));
+    }
+
+    @Override
+    public HardSoftBigDecimalScore multiply(double multiplicand) {
+        return of(ScoreUtil.multiply(hardScore, multiplicand), ScoreUtil.multiply(softScore, multiplicand));
+    }
+
+    @Override
+    public HardSoftBigDecimalScore divide(double divisor) {
+        return of(ScoreUtil.divide(hardScore, divisor), ScoreUtil.divide(softScore, divisor));
+    }
+
+    @Override
+    public HardSoftBigDecimalScore power(double exponent) {
+        return of(ScoreUtil.power(hardScore, exponent), ScoreUtil.power(softScore, exponent));
+    }
+
+    @Override
+    public HardSoftBigDecimalScore abs() {
+        return of(hardScore.abs(), softScore.abs());
+    }
+
+    @Override
+    public HardSoftBigDecimalScore zero() {
+        return ZERO;
+    }
+
+    @Override
+    public Number[] toLevelNumbers() {
+        return new Number[] { hardScore, softScore };
+    }
+
+    @Override
+    public boolean equals(Object o) {
+        if (o instanceof HardSoftBigDecimalScore(var otherStructuralScore, var otherHardScore, var otherSoftScore)) {
+            return structuralScore == otherStructuralScore
+                    && ScoreUtil.equalsIgnoringScale(hardScore, otherHardScore)
+                    && ScoreUtil.equalsIgnoringScale(softScore, otherSoftScore);
+        }
+        return false;
+    }
+
+    @Override
+    public int hashCode() {
+        return Objects.hash(structuralScore, ScoreUtil.hashCodeIgnoringScale(hardScore),
+                ScoreUtil.hashCodeIgnoringScale(softScore));
+    }
+
+    @Override
+    public int compareTo(HardSoftBigDecimalScore other) {
+        if (structuralScore != other.structuralScore) {
+            return Long.compare(structuralScore, other.structuralScore);
+        }
+        var hardScoreComparison = hardScore.compareTo(other.hardScore());
+        if (hardScoreComparison != 0) {
+            return hardScoreComparison;
+        } else {
+            return softScore.compareTo(other.softScore());
+        }
+    }
+
+    @Override
+    public String toShortString() {
+        return ScoreUtil.buildShortString(this, ScoreUtil.BIG_DECIMAL_NOT_ZERO, HARD_LABEL, SOFT_LABEL);
+    }
+
+    @Override
+    public String toString() {
+        return (structuralScore < 0)
+                ? "%d%s/%s%s/%s%s".formatted(structuralScore, STRUCTURAL_LABEL, hardScore, HARD_LABEL, softScore, SOFT_LABEL)
+                : "%s%s/%s%s".formatted(hardScore, HARD_LABEL, softScore, SOFT_LABEL);
+    }
+
+}

@@ -1,0 +1,26 @@
+// SPDX-License-Identifier: Apache-2.0
+// Changed from the original (see NOTICE): package names.
+package com.quicopt.planner.api.score.stream;
+
+import com.quicopt.planner.api.score.Score;
+
+import org.jspecify.annotations.NonNull;
+
+/**
+ * Used by Constraint Streams' {@link Score} calculation.
+ * An implementation must be stateless in order to facilitate building a single set of constraints
+ * independent of potentially changing constraint weights.
+ */
+public interface ConstraintProvider {
+
+    /**
+     * This method is called once to create the constraints.
+     * To create a {@link Constraint}, start with {@link ConstraintFactory#forEach(Class)}.
+     *
+     * @return an array of all {@link Constraint constraints} that could apply.
+     *         The constraints with a zero weight for a particular problem
+     *         will be automatically disabled when scoring that problem, to improve performance.
+     */
+    Constraint @NonNull [] defineConstraints(@NonNull ConstraintFactory constraintFactory);
+
+}

@@ -1,0 +1,59 @@
+// SPDX-License-Identifier: Apache-2.0
+// Changed from the original (see NOTICE): package names.
+package com.quicopt.planner.impl.score.stream.common;
+
+import java.util.Objects;
+
+import com.quicopt.planner.api.score.Score;
+import com.quicopt.planner.api.score.stream.Constraint;
+import com.quicopt.planner.api.score.stream.ConstraintBuilder;
+import com.quicopt.planner.api.score.stream.ConstraintMetadata;
+
+import org.jspecify.annotations.NullMarked;
+import org.jspecify.annotations.Nullable;
+
+@SuppressWarnings("rawtypes")
+@NullMarked
+public abstract class AbstractConstraintBuilder<Score_ extends Score<Score_>> implements ConstraintBuilder {
+
+    private final ConstraintConstructor constraintConstructor;
+    private final ScoreImpactType impactType;
+    private final Score_ constraintWeight;
+
+    protected AbstractConstraintBuilder(ConstraintConstructor constraintConstructor, ScoreImpactType impactType,
+            Score_ constraintWeight) {
+        this.constraintConstructor = Objects.requireNonNull(constraintConstructor);
+        this.impactType = Objects.requireNonNull(impactType);
+        this.constraintWeight = constraintWeight;
+    }
+
+    protected abstract <JustificationMapping_> @Nullable JustificationMapping_ getJustificationMapping();
+
+    @SuppressWarnings("unchecked")
+    @Override
+    public final Constraint asConstraint(ConstraintMetadata metadata) {
+        return constraintConstructor.apply(metadata, constraintWeight, impactType, getJustificationMapping());
+    }
+
+    public static String sanitize(String fieldName, String fieldValue) {
+        if (fieldValue == null || fieldValue.equalsIgnoreCase("null") || fieldValue.equalsIgnoreCase("nil")) {
+            throw new IllegalArgumentException("The %s (%s) cannot be null.".formatted(fieldName, fieldValue));
+        }
+        if (!fieldValue.matches("^[a-zA-Z0-9]+[a-zA-Z0-9 _.'()-]*$")) {
+            throw new IllegalArgumentException(
+                    """
+                            The %s (%s) must only contain alphanumeric characters, spaces, underscores, hyphens, \
+                            apostrophes ("'"), parentheses ("(", ")") or full stops (".").
+                            It must start with an alphanumeric character.
+                            Names "null" and "nil" are not allowed."""
+                            .formatted(fieldName, fieldValue));
+        }
+        var trimmed = fieldValue.trim();
+        if (trimmed.isEmpty()) {
+            throw new IllegalArgumentException(
+                    "The %s (%s) must not be empty or only contain whitespace.".formatted(fieldName, fieldName));
+        }
+        return trimmed;
+    }
+
+}

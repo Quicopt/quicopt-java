@@ -1,0 +1,28 @@
+// SPDX-License-Identifier: Apache-2.0
+// Changed from the original (see NOTICE): package names.
+package com.quicopt.planner.config.heuristic.selector.move;
+
+import java.util.random.RandomGenerator;
+
+import com.quicopt.planner.impl.heuristic.selector.common.nearby.NearbyDistanceMeter;
+
+import org.jspecify.annotations.NonNull;
+
+/**
+ * For move selectors that support Nearby Selection autoconfiguration.
+ */
+public interface NearbyAutoConfigurationEnabled<Config_ extends MoveSelectorConfig<Config_>> {
+
+    /**
+     * @return true if it can enable the nearby setting for the given move configuration; otherwise, it returns false.
+     */
+    boolean canEnableNearbyInMixedModels();
+
+    /**
+     * @return new instance with the Nearby Selection settings properly configured
+     */
+    @NonNull
+    Config_ enableNearbySelection(@NonNull Class<? extends NearbyDistanceMeter<?, ?>> distanceMeter,
+            @NonNull RandomGenerator random);
+
+}

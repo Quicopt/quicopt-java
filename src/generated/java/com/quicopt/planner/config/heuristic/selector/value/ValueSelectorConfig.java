@@ -1,0 +1,364 @@
+// SPDX-License-Identifier: Apache-2.0
+// Changed from the original (see NOTICE): package names, internal methods removed.
+package com.quicopt.planner.config.heuristic.selector.value;
+
+import java.util.Comparator;
+import java.util.function.Consumer;
+
+import jakarta.xml.bind.annotation.XmlAttribute;
+import jakarta.xml.bind.annotation.XmlElement;
+import jakarta.xml.bind.annotation.XmlType;
+
+import com.quicopt.planner.api.domain.common.ComparatorFactory;
+import com.quicopt.planner.api.domain.variable.PlanningVariable;
+import com.quicopt.planner.config.heuristic.selector.SelectorConfig;
+import com.quicopt.planner.config.heuristic.selector.common.SelectionCacheType;
+import com.quicopt.planner.config.heuristic.selector.common.SelectionOrder;
+import com.quicopt.planner.config.heuristic.selector.common.decorator.SelectionSorterOrder;
+import com.quicopt.planner.config.heuristic.selector.common.nearby.NearbySelectionConfig;
+import com.quicopt.planner.config.util.ConfigUtils;
+import com.quicopt.planner.impl.heuristic.selector.common.decorator.SelectionFilter;
+import com.quicopt.planner.impl.heuristic.selector.common.decorator.SelectionProbabilityWeightFactory;
+import com.quicopt.planner.impl.heuristic.selector.common.decorator.SelectionSorter;
+
+import org.jspecify.annotations.NullMarked;
+import org.jspecify.annotations.Nullable;
+
+@XmlType(propOrder = {
+        "id",
+        "mimicSelectorRef",
+        "downcastEntityClass",
+        "variableName",
+        "cacheType",
+        "selectionOrder",
+        "nearbySelectionConfig",
+        "filterClass",
+        "sorterManner",
+        "comparatorClass",
+        "comparatorFactoryClass",
+        "sorterOrder",
+        "sorterClass",
+        "probabilityWeightFactoryClass",
+        "selectedCountLimit"
+})
+@NullMarked
+public final class ValueSelectorConfig extends SelectorConfig<ValueSelectorConfig> {
+
+    @XmlAttribute
+    @Nullable
+    private String id = null;
+    @XmlAttribute
+    @Nullable
+    private String mimicSelectorRef = null;
+
+    @Nullable
+    private String downcastEntityClass = null;
+    @XmlAttribute
+    @Nullable
+    private String variableName = null;
+
+    @Nullable
+    private SelectionCacheType cacheType = null;
+    @Nullable
+    private SelectionOrder selectionOrder = null;
+
+    @XmlElement(name = "nearbySelection")
+    @Nullable
+    private NearbySelectionConfig nearbySelectionConfig = null;
+
+    @Nullable
+    private String filterClass = null;
+
+    @Nullable
+    private ValueSorterManner sorterManner = null;
+    @Nullable
+    private String comparatorClass = null;
+    @Nullable
+    private String comparatorFactoryClass = null;
+    @Nullable
+    private SelectionSorterOrder sorterOrder = null;
+    @Nullable
+    private String sorterClass = null;
+
+    @Nullable
+    private String probabilityWeightFactoryClass = null;
+
+    @Nullable
+    private Long selectedCountLimit = null;
+
+    public ValueSelectorConfig() {
+    }
+
+    public ValueSelectorConfig(String variableName) {
+        this.variableName = variableName;
+    }
+
+    public ValueSelectorConfig(@Nullable ValueSelectorConfig inheritedConfig) {
+        if (inheritedConfig != null) {
+            inherit(inheritedConfig);
+        }
+    }
+
+    public @Nullable String getId() {
+        return id;
+    }
+
+    public void setId(@Nullable String id) {
+        this.id = id;
+    }
+
+    public @Nullable String getMimicSelectorRef() {
+        return mimicSelectorRef;
+    }
+
+    public void setMimicSelectorRef(@Nullable String mimicSelectorRef) {
+        this.mimicSelectorRef = mimicSelectorRef;
+    }
+
+    public @Nullable Class<?> getDowncastEntityClass() {
+        return ConfigUtils.resolveClass(downcastEntityClass, "downcastEntityClass", this);
+    }
+
+    public void setDowncastEntityClass(@Nullable Class<?> downcastEntityClass) {
+        this.downcastEntityClass = downcastEntityClass == null ? null : downcastEntityClass.getName();
+    }
+
+    public @Nullable String getVariableName() {
+        return variableName;
+    }
+
+    public void setVariableName(@Nullable String variableName) {
+        this.variableName = variableName;
+    }
+
+    public @Nullable SelectionCacheType getCacheType() {
+        return cacheType;
+    }
+
+    public void setCacheType(@Nullable SelectionCacheType cacheType) {
+        this.cacheType = cacheType;
+    }
+
+    public @Nullable SelectionOrder getSelectionOrder() {
+        return selectionOrder;
+    }
+
+    public void setSelectionOrder(@Nullable SelectionOrder selectionOrder) {
+        this.selectionOrder = selectionOrder;
+    }
+
+    public @Nullable NearbySelectionConfig getNearbySelectionConfig() {
+        return nearbySelectionConfig;
+    }
+
+    public void setNearbySelectionConfig(@Nullable NearbySelectionConfig nearbySelectionConfig) {
+        this.nearbySelectionConfig = nearbySelectionConfig;
+    }
+
+    public @Nullable Class<? extends SelectionFilter> getFilterClass() {
+        return ConfigUtils.resolveClass(filterClass, "filterClass", this);
+    }
+
+    public void setFilterClass(@Nullable Class<? extends SelectionFilter> filterClass) {
+        this.filterClass = filterClass == null ? null : filterClass.getName();
+    }
+
+    public @Nullable ValueSorterManner getSorterManner() {
+        return sorterManner;
+    }
+
+    public void setSorterManner(@Nullable ValueSorterManner sorterManner) {
+        this.sorterManner = sorterManner;
+    }
+
+    public @Nullable Class<? extends Comparator> getComparatorClass() {
+        return ConfigUtils.resolveClass(comparatorClass, "comparatorClass", this);
+    }
+
+    public void setComparatorClass(@Nullable Class<? extends Comparator> comparatorClass) {
+        this.comparatorClass = comparatorClass == null ? null : comparatorClass.getName();
+    }
+
+    public @Nullable Class<? extends ComparatorFactory> getComparatorFactoryClass() {
+        return ConfigUtils.resolveClass(comparatorFactoryClass, "comparatorFactoryClass", this);
+    }
+
+    public void setComparatorFactoryClass(@Nullable Class<? extends ComparatorFactory> comparatorFactoryClass) {
+        this.comparatorFactoryClass = comparatorFactoryClass == null ? null : comparatorFactoryClass.getName();
+    }
+
+    public @Nullable SelectionSorterOrder getSorterOrder() {
+        return sorterOrder;
+    }
+
+    public void setSorterOrder(@Nullable SelectionSorterOrder sorterOrder) {
+        this.sorterOrder = sorterOrder;
+    }
+
+    public @Nullable Class<? extends SelectionSorter> getSorterClass() {
+        return ConfigUtils.resolveClass(sorterClass, "sorterClass", this);
+    }
+
+    public void setSorterClass(@Nullable Class<? extends SelectionSorter> sorterClass) {
+        this.sorterClass = sorterClass == null ? null : sorterClass.getName();
+    }
+
+    public @Nullable Class<? extends SelectionProbabilityWeightFactory> getProbabilityWeightFactoryClass() {
+        return ConfigUtils.resolveClass(probabilityWeightFactoryClass, "probabilityWeightFactoryClass", this);
+    }
+
+    public void setProbabilityWeightFactoryClass(
+            @Nullable Class<? extends SelectionProbabilityWeightFactory> probabilityWeightFactoryClass) {
+        this.probabilityWeightFactoryClass =
+                probabilityWeightFactoryClass == null ? null : probabilityWeightFactoryClass.getName();
+    }
+
+    public @Nullable Long getSelectedCountLimit() {
+        return selectedCountLimit;
+    }
+
+    public void setSelectedCountLimit(@Nullable Long selectedCountLimit) {
+        this.selectedCountLimit = selectedCountLimit;
+    }
+
+    // ************************************************************************
+    // With methods
+    // ************************************************************************
+
+    public ValueSelectorConfig withId(String id) {
+        this.setId(id);
+        return this;
+    }
+
+    public ValueSelectorConfig withMimicSelectorRef(String mimicSelectorRef) {
+        this.setMimicSelectorRef(mimicSelectorRef);
+        return this;
+    }
+
+    public ValueSelectorConfig withDowncastEntityClass(Class<?> entityClass) {
+        this.downcastEntityClass = entityClass.getName();
+        return this;
+    }
+
+    public ValueSelectorConfig withVariableName(String variableName) {
+        this.setVariableName(variableName);
+        return this;
+    }
+
+    public ValueSelectorConfig withCacheType(SelectionCacheType cacheType) {
+        this.setCacheType(cacheType);
+        return this;
+    }
+
+    public ValueSelectorConfig withSelectionOrder(SelectionOrder selectionOrder) {
+        this.setSelectionOrder(selectionOrder);
+        return this;
+    }
+
+    public ValueSelectorConfig withNearbySelectionConfig(NearbySelectionConfig nearbySelectionConfig) {
+        this.setNearbySelectionConfig(nearbySelectionConfig);
+        return this;
+    }
+
+    public ValueSelectorConfig withFilterClass(Class<? extends SelectionFilter> filterClass) {
+        this.filterClass = filterClass.getName();
+        return this;
+    }
+
+    public ValueSelectorConfig withSorterManner(ValueSorterManner sorterManner) {
+        this.setSorterManner(sorterManner);
+        return this;
+    }
+
+    public ValueSelectorConfig withComparatorClass(Class<? extends Comparator> comparatorClass) {
+        this.comparatorClass = comparatorClass.getName();
+        return this;
+    }
+
+    public ValueSelectorConfig withComparatorFactoryClass(Class<? extends ComparatorFactory> comparatorFactoryClass) {
+        this.comparatorFactoryClass = comparatorFactoryClass.getName();
+        return this;
+    }
+
+    public ValueSelectorConfig withSorterOrder(SelectionSorterOrder sorterOrder) {
+        this.setSorterOrder(sorterOrder);
+        return this;
+    }
+
+    public ValueSelectorConfig withSorterClass(Class<? extends SelectionSorter> sorterClass) {
+        this.sorterClass = sorterClass.getName();
+        return this;
+    }
+
+    public ValueSelectorConfig
+            withProbabilityWeightFactoryClass(Class<? extends SelectionProbabilityWeightFactory> factoryClass) {
+        this.probabilityWeightFactoryClass = factoryClass.getName();
+        return this;
+    }
+
+    public ValueSelectorConfig withSelectedCountLimit(long selectedCountLimit) {
+        this.setSelectedCountLimit(selectedCountLimit);
+        return this;
+    }
+
+    // ************************************************************************
+    // Builder methods
+    // ************************************************************************
+
+    @Override
+    public ValueSelectorConfig inherit(ValueSelectorConfig inheritedConfig) {
+        id = ConfigUtils.inheritOverwritableProperty(id, inheritedConfig.getId());
+        mimicSelectorRef = ConfigUtils.inheritOverwritableProperty(mimicSelectorRef,
+                inheritedConfig.getMimicSelectorRef());
+        downcastEntityClass = ConfigUtils.inheritOverwritableProperty(downcastEntityClass,
+                inheritedConfig.downcastEntityClass);
+        variableName = ConfigUtils.inheritOverwritableProperty(variableName, inheritedConfig.getVariableName());
+        nearbySelectionConfig = ConfigUtils.inheritConfig(nearbySelectionConfig, inheritedConfig.getNearbySelectionConfig());
+        filterClass = ConfigUtils.inheritOverwritableProperty(filterClass, inheritedConfig.filterClass);
+        cacheType = ConfigUtils.inheritOverwritableProperty(cacheType, inheritedConfig.getCacheType());
+        selectionOrder = ConfigUtils.inheritOverwritableProperty(selectionOrder, inheritedConfig.getSelectionOrder());
+        sorterManner = ConfigUtils.inheritOverwritableProperty(
+                sorterManner, inheritedConfig.getSorterManner());
+        comparatorClass = ConfigUtils.inheritOverwritableProperty(
+                comparatorClass, inheritedConfig.comparatorClass);
+        comparatorFactoryClass = ConfigUtils.inheritOverwritableProperty(
+                comparatorFactoryClass, inheritedConfig.comparatorFactoryClass);
+        sorterOrder = ConfigUtils.inheritOverwritableProperty(
+                sorterOrder, inheritedConfig.getSorterOrder());
+        sorterClass = ConfigUtils.inheritOverwritableProperty(
+                sorterClass, inheritedConfig.sorterClass);
+        probabilityWeightFactoryClass = ConfigUtils.inheritOverwritableProperty(
+                probabilityWeightFactoryClass, inheritedConfig.probabilityWeightFactoryClass);
+        selectedCountLimit = ConfigUtils.inheritOverwritableProperty(
+                selectedCountLimit, inheritedConfig.getSelectedCountLimit());
+        return this;
+    }
+
+    @Override
+    public ValueSelectorConfig copyConfig() {
+        return new ValueSelectorConfig().inherit(this);
+    }
+
+    @Override
+    public void visitReferencedClasses(Consumer<Class<?>> classVisitor) {
+        classVisitor.accept(getDowncastEntityClass());
+        if (nearbySelectionConfig != null) {
+            nearbySelectionConfig.visitReferencedClasses(classVisitor);
+        }
+        classVisitor.accept(getFilterClass());
+        classVisitor.accept(getComparatorClass());
+        classVisitor.accept(getComparatorFactoryClass());
+        classVisitor.accept(getSorterClass());
+        classVisitor.accept(getProbabilityWeightFactoryClass());
+    }
+
+    @Override
+    public String toString() {
+        return getClass().getSimpleName() + "(" + variableName + ")";
+    }
+
+    @Override
+    public boolean hasNearbySelectionConfig() {
+        return nearbySelectionConfig != null;
+    }
+}

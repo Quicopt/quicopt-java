@@ -1,0 +1,34 @@
+// SPDX-License-Identifier: Apache-2.0
+// Changed from the original (see NOTICE): package names.
+package com.quicopt.planner.api.domain.solution;
+
+import static java.lang.annotation.ElementType.FIELD;
+import static java.lang.annotation.ElementType.METHOD;
+import static java.lang.annotation.RetentionPolicy.RUNTIME;
+
+import java.lang.annotation.Retention;
+import java.lang.annotation.Target;
+import java.util.Collection;
+import java.util.LinkedHashSet;
+import java.util.List;
+import java.util.SequencedCollection;
+
+import com.quicopt.planner.api.domain.entity.PlanningEntity;
+
+/**
+ * Specifies that a property (or a field) on a {@link PlanningSolution} class is a {@link Collection} of planning entities.
+ * <p>
+ * Every element in the planning entity collection must have the {@link PlanningEntity} annotation.
+ * Every element in the planning entity collection will be registered with the solver.
+ * <p>
+ * For solver reproducibility, the collection must have a deterministic, stable iteration order.
+ * It must not contain duplicates (as defined by {@link Object#equals(Object)}).
+ * It is recommended to use any {@link SequencedCollection}, such as {@link List} or {@link LinkedHashSet}.
+ *
+ * @see PlanningEntityProperty
+ */
+@Target({ METHOD, FIELD })
+@Retention(RUNTIME)
+public @interface PlanningEntityCollectionProperty {
+
+}
