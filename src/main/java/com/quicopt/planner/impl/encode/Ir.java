@@ -1,0 +1,223 @@
+// SPDX-License-Identifier: Apache-2.0
+// SPDX-FileCopyrightText: (c) 2026 Tim Bode, PGI-12, Forschungszentrum Jülich
+package com.quicopt.planner.impl.encode;
+
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+/**
+ * The expression table that translated functions are written into. Structurally equal nodes are stored once, so
+ * an expression is a graph whose nodes only reference lower ids, exactly as the wire carries it.
+ */
+final class Ir {
+
+    /**
+     * One expression node, as on the wire.
+     *
+     * @param op the catalog operator
+     * @param args the ids of the operand nodes
+     * @param type the node's result type
+     * @param classId the class of an {@code arg}, {@code column}, {@code variable} or {@code shadow} node; the table
+     *        of a {@code table} node
+     * @param index the tuple position, column, variable, shadow or fold state the node refers to
+     * @param value a constant, or the loop scope of {@code loop_var} and {@code fold} nodes
+     */
+    record Node(String op, List<Integer> args, Type type, int classId, int index, long value) {
+    }
+
+    /**
+     * A value on the lifter's symbolic stack.
+     *
+     * @param node the id of the node that computes it
+     * @param type its type, which may refine the node's (a boolean read as an int, say)
+     */
+    record Val(int node, Type type) {
+    }
+
+    private final List<Node> nodes = new ArrayList<>();
+    private final Map<Node, Integer> ids = new HashMap<>();
+    private int scopes;
+
+    /**
+     * @return all nodes, in id order
+     */
+    List<Node> nodes() {
+        return nodes;
+    }
+
+    /**
+     * @return the node behind a value
+     */
+    Node node(Val v) {
+        return nodes.get(v.node());
+    }
+
+    /**
+     * @return a fresh loop scope id
+     */
+    int newScope() {
+        return ++scopes;
+    }
+
+    /**
+     * @return the value of a new node, or of the equal node already present
+     */
+    Val add(String op, List<Integer> args, Type type, int classId, int index, long value) {
+        var node = new Node(op, List.copyOf(args), type, classId, index, value);
+        int id = ids.computeIfAbsent(node, n -> {
+            nodes.add(n);
+            return nodes.size() - 1;
+        });
+        return new Val(id, type);
+    }
+
+    /**
+     * @return {@code op(args…)} with a result of the given type
+     */
+    Val apply(String op, Type type, Val... args) {
+        var argIds = new ArrayList<Integer>();
+        for (Val arg : args) {
+            argIds.add(arg.node());
+        }
+        return add(op, argIds, type, 0, 0, 0);
+    }
+
+    /**
+     * @return a constant of the given type
+     */
+    Val constant(Type type, long value) {
+        return add("const", List.of(), type, 0, 0, value);
+    }
+
+    /**
+     * @return a boolean constant
+     */
+    Val bool(boolean value) {
+        return constant(Type.BOOL, value ? 1 : 0);
+    }
+
+    /**
+     * @return the null of a type: -1 for a row, {@link Type#NULL_LONG} otherwise
+     */
+    Val nullOf(Type type) {
+        return constant(type, type.kind() == Type.Kind.REF ? -1 : Type.NULL_LONG);
+    }
+
+    /**
+     * @return the logical negation, with double negation and constants folded
+     */
+    Val not(Val a) {
+        if (isConstant(a)) {
+            return bool(constantValue(a) == 0);
+        }
+        var node = node(a);
+        if (node.op().equals("not")) {
+            return new Val(node.args().get(0), Type.BOOL);
+        }
+        return apply("not", Type.BOOL, a);
+    }
+
+    /**
+     * {@code cond ? then : otherwise}. A {@code null} branch, or one that throws ({@code fail}), takes the other
+     * branch's type. When both branches are booleans the result is written with {@code and}, {@code or} and
+     * {@code not}, which is how the compiler's branching code for {@code a && b} becomes {@code and(a, b)} again.
+     *
+     * @return the conditional value
+     */
+    Val choose(Val cond, Val then, Val otherwise) {
+        if (isFail(then) && !isFail(otherwise)) {
+            then = add("fail", List.of(), otherwise.type(), 0, 0, 0);
+        } else if (isFail(otherwise) && !isFail(then)) {
+            otherwise = add("fail", List.of(), then.type(), 0, 0, 0);
+        } else if (then.type().kind() == Type.Kind.NULL && otherwise.type().kind() != Type.Kind.NULL) {
+            then = nullOf(otherwise.type());
+        } else if (otherwise.type().kind() == Type.Kind.NULL && then.type().kind() != Type.Kind.NULL) {
+            otherwise = nullOf(then.type());
+        }
+        if (then.equals(otherwise)) {
+            return then;
+        }
+        if (isConstant(cond)) {
+            return constantValue(cond) != 0 ? then : otherwise;
+        }
+        if (then.type().kind() == Type.Kind.BOOL && otherwise.type().kind() == Type.Kind.BOOL) {
+            return chooseBool(cond, then, otherwise);
+        }
+        return apply("ifelse", then.type(), cond, then, otherwise);
+    }
+
+    /**
+     * @return {@link #choose} for two boolean branches
+     */
+    private Val chooseBool(Val cond, Val then, Val otherwise) {
+        if (isConstant(then)) {
+            return constantValue(then) != 0 ? or(cond, otherwise) : and(not(cond), otherwise);
+        }
+        if (isConstant(otherwise)) {
+            return constantValue(otherwise) != 0 ? or(not(cond), then) : and(cond, then);
+        }
+        return apply("ifelse", Type.BOOL, cond, then, otherwise);
+    }
+
+    /**
+     * @return the logical and, with constants folded
+     */
+    Val and(Val a, Val b) {
+        if (isConstant(a)) {
+            return constantValue(a) != 0 ? b : a;
+        }
+        if (isConstant(b)) {
+            return constantValue(b) != 0 ? a : b;
+        }
+        return apply("and", Type.BOOL, a, b);
+    }
+
+    /**
+     * @return the logical or, with constants folded
+     */
+    Val or(Val a, Val b) {
+        if (isConstant(a)) {
+            return constantValue(a) != 0 ? a : b;
+        }
+        if (isConstant(b)) {
+            return constantValue(b) != 0 ? b : a;
+        }
+        return apply("or", Type.BOOL, a, b);
+    }
+
+    /**
+     * @return whether a value is a {@code fail} node: the path that computes it throws
+     */
+    boolean isFail(Val v) {
+        return node(v).op().equals("fail");
+    }
+
+    /**
+     * @return whether a value is a constant node
+     */
+    boolean isConstant(Val v) {
+        return node(v).op().equals("const");
+    }
+
+    /**
+     * @return the value of a constant node
+     */
+    long constantValue(Val v) {
+        return node(v).value();
+    }
+
+    /**
+     * @return a Java int 0 or 1 read as a boolean, as a {@code boolean} return needs
+     */
+    Val asBool(Val v) {
+        if (v.type().kind() == Type.Kind.BOOL) {
+            return v;
+        }
+        if (isConstant(v)) {
+            return bool(constantValue(v) != 0);
+        }
+        return apply("ne", Type.BOOL, v, constant(v.type(), 0));
+    }
+}

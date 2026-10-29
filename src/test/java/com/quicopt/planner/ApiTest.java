@@ -21,6 +21,9 @@ import com.quicopt.planner.api.solver.SolutionUpdatePolicy;
 import com.quicopt.planner.api.solver.SolverFactory;
 import com.quicopt.planner.config.solver.SolverConfig;
 import com.quicopt.planner.impl.score.stream.collector.UniCollectorDescriptor;
+import com.quicopt.planner.testdomain.meetings.Meeting;
+import com.quicopt.planner.testdomain.meetings.MeetingConstraints;
+import com.quicopt.planner.testdomain.meetings.MeetingPlan;
 
 import org.junit.jupiter.api.Test;
 
@@ -83,9 +86,11 @@ class ApiTest {
      */
     @Test
     void unsupportedSolutionManagerMethodsSaySo() {
-        SolutionManager<Object, HardSoftScore> solutionManager =
-                SolutionManager.create(SolverFactory.create(new SolverConfig()));
-        var solution = new Object();
+        var config = new SolverConfig().withSolutionClass(MeetingPlan.class).withEntityClasses(Meeting.class)
+                .withConstraintProviderClass(MeetingConstraints.class);
+        SolutionManager<MeetingPlan, HardSoftScore> solutionManager =
+                SolutionManager.create(SolverFactory.create(config));
+        var solution = MeetingPlan.smallWeek();
         var analysis = assertThrows(IllegalStateException.class, () -> solutionManager.analyze(solution,
                 ScoreAnalysisFetchPolicy.FETCH_ALL, SolutionUpdatePolicy.UPDATE_ALL));
         assertEquals("Score analysis is not supported by this client.", analysis.getMessage());

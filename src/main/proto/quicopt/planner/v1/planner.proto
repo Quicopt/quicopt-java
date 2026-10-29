@@ -1,0 +1,538 @@
+// ===========================================================================
+//  Quicopt planner wire schema, v1 (draft)
+//
+//  The contract between a planning client and the planner service. A client
+//  describes a planning problem (planning entities and problem facts,
+//  planning variables, constraint streams, scores, solver configuration) as
+//  pure data:
+//
+//    - every object becomes a row of its class's table;
+//    - every function a user passes to a constraint stream (a filter, a
+//      joiner key, a match weight, a collector mapping) arrives translated
+//      into a typed expression over a closed operator catalog, documented in
+//      CATALOG.md next to this file.
+//
+//  The server never runs client code.
+//
+//  Status: draft. Field numbers may change until the first public client
+//  release; from then on the evolution rules below apply.
+//
+//  Evolution rules:
+//    - Field numbers are permanent. Never reuse a number; `reserved` removed
+//      ones.
+//    - Additive only: new fields, messages and enum values may be appended.
+//      A new operator is a new catalog entry.
+//    - Breaking changes bump the package to v2 and ship a new file; v1 stays
+//      frozen.
+//
+//  Conventions:
+//    - Ids are 0-based indexes into the repeated field holding the item: a
+//      class id indexes PlanningProblem.classes, an expression id
+//      PlanningProblem.expressions, a stream id PlanningProblem.streams.
+//    - Expressions and streams are flat tables in which an entry references
+//      only entries with a lower id, so both graphs are acyclic by
+//      construction.
+//    - No proto maps: their wire order is unspecified, and encoders on
+//      different platforms must produce identical bytes for identical
+//      problems.
+//    - Every value is encoded according to its ValueKind (see there).
+// ===========================================================================
+
+syntax = "proto3";
+
+package quicopt.planner.v1;
+
+option java_package = "com.quicopt.planner.wire";
+option java_multiple_files = true;
+
+// ---------------------------------------------------------------------------
+// Values
+// ---------------------------------------------------------------------------
+
+// How a value is encoded. Most kinds are carried as one int64:
+//
+//   BOOL          0 or 1
+//   INT           a Java int; arithmetic on it wraps at 32 bits
+//   LONG          a Java long
+//   STRING        an id: equal strings have equal ids. When
+//                 PlanningProblem.strings is not empty, the id indexes it.
+//   ENUM          the constant's ordinal
+//   DATE          days since 1970-01-01 (LocalDate.toEpochDay)
+//   TIME          nanoseconds since midnight (LocalTime.toNanoOfDay)
+//   DATETIME      nanoseconds since 1970-01-01T00:00, a LocalDateTime read
+//                 without time zone; representable from 1677 to 2262
+//   DURATION      nanoseconds (Duration.toNanos); representable up to about
+//                 292 years either way
+//   REF           a row of the class ValueType.ref_class
+//
+// The others have their own fields:
+//
+//   DOUBLE        a Java double, in `double` fields
+//   BIG_DECIMAL   a Java BigDecimal, in Decimal messages
+//   LIST          a Java collection of ValueType.element values, in LongList
+//                 messages, in the collection's iteration order
+//   LOAD_BALANCE  the result of the loadBalance collector; it exists only
+//                 inside the server and never appears in data
+//
+// Null. A REF is null as -1. Every other int64-encoded kind is null as
+// -2^63 (Long.MIN_VALUE). BOOL, INT and LONG are Java primitives and are null
+// only where a boxed Boolean, Integer or Long was: a planning variable of such
+// a type, or a value returned by a user function. A client refuses a boxed
+// Long that holds Long.MIN_VALUE itself.
+enum ValueKind {
+  VALUE_KIND_UNSPECIFIED = 0;
+  BOOL = 1;
+  INT = 2;
+  LONG = 3;
+  DOUBLE = 4;
+  BIG_DECIMAL = 5;
+  STRING = 6;
+  ENUM = 7;
+  DATE = 8;
+  TIME = 9;
+  DATETIME = 10;
+  DURATION = 11;
+  REF = 12;
+  LIST = 13;
+  LOAD_BALANCE = 14;
+}
+
+message ValueType {
+  ValueKind kind = 1;
+  uint32 ref_class = 2;   // REF: the class id
+  ValueType element = 3;  // LIST: the element type
+}
+
+// A Java BigDecimal: value = unscaled × 10^(−scale).
+message Decimal {
+  sint64 unscaled = 1;    // the unscaled value, when it fits in 64 bits
+  int32 scale = 2;
+  bytes big_unscaled = 3; // otherwise: the unscaled value as two's complement
+                          // big-endian bytes, as BigInteger.toByteArray()
+}
+
+// A sequence of int64-encoded values.
+message LongList {
+  repeated sint64 values = 1;
+}
+
+// ---------------------------------------------------------------------------
+// The problem
+// ---------------------------------------------------------------------------
+
+message PlanningProblem {
+  ScoreDefinition score_definition = 1;
+  repeated ClassDecl classes = 2;          // index = class id
+  repeated Expression expressions = 3;     // index = expression id
+  repeated StreamNode streams = 4;         // index = stream id
+  repeated ConstraintDecl constraints = 5; // in the constraint provider's order
+  repeated LookupTable tables = 6;         // index = table id
+  repeated string strings = 7;             // the text of STRING ids, when an
+                                           // operator needs text (ordering);
+                                           // empty otherwise
+  SolverConfig solver_config = 8;
+}
+
+// The score type of the solution's @PlanningScore field.
+enum ScoreType {
+  SCORE_TYPE_UNSPECIFIED = 0;
+  SIMPLE = 1;             // SimpleScore, SimpleBigDecimalScore
+  HARD_SOFT = 2;          // HardSoftScore, HardSoftBigDecimalScore
+  HARD_MEDIUM_SOFT = 3;   // HardMediumSoftScore, HardMediumSoftBigDecimalScore
+  BENDABLE = 4;           // BendableScore, BendableBigDecimalScore
+}
+
+message ScoreDefinition {
+  ScoreType score_type = 1;
+  bool big_decimal = 2;   // the levels are BigDecimal rather than long
+  uint32 hard_levels = 3; // BENDABLE only
+  uint32 soft_levels = 4; // BENDABLE only
+}
+
+// A score value. Levels are listed hardest first.
+message Score {
+  int64 structural = 1;                // the structural level, which counts
+                                       // inconsistent shadow variables
+  repeated int64 levels = 2;           // long scores
+  repeated Decimal decimal_levels = 3; // BigDecimal scores
+}
+
+// One planning entity class or problem fact class; its objects are the rows.
+message ClassDecl {
+  string name = 1;                     // the class's simple name, for messages
+  bool entity = 2;                     // a planning entity class
+  uint32 rows = 3;                     // the number of objects
+  repeated Column columns = 4;         // fields that no solver changes, as far
+                                       // as translated functions read them
+  repeated Variable variables = 5;     // genuine basic planning variables, in
+                                       // the solver API's order: a superclass's
+                                       // first, each class's by field name. The
+                                       // construction heuristic tries value
+                                       // combinations with the last varying
+                                       // fastest, so the order decides ties.
+  ListVariable list_variable = 6;      // the genuine list variable, if any
+  repeated ShadowVariable shadows = 7;
+  repeated bool pinned = 8;            // @PlanningPin, one per row; empty when
+                                       // no row is pinned
+  repeated uint32 pinned_to_index = 9; // @PlanningPinToIndex of the list
+                                       // variable, one per row; empty = all 0
+}
+
+// A field whose values stay fixed during solving.
+message Column {
+  string name = 1;                // the field's name, for messages
+  ValueType value_type = 2;
+  repeated sint64 values = 3;     // one per row, for int64-encoded kinds
+  repeated double doubles = 4;    // DOUBLE: one per row
+  repeated Decimal decimals = 5;  // BIG_DECIMAL: one per row
+  repeated LongList lists = 6;    // LIST: one per row
+  repeated uint32 null_rows = 7;  // DOUBLE, BIG_DECIMAL, LIST: the rows whose
+                                  // value is null (their entry is a placeholder)
+}
+
+// The values a planning variable may take, in the order of the value range.
+message ValueRange {
+  repeated sint64 values = 1;
+}
+
+// A genuine basic planning variable.
+message Variable {
+  string name = 1;
+  ValueType value_type = 2;               // REF to the value class, or a number kind
+  ValueRange range = 3;                  // the value range shared by all rows
+  repeated ValueRange entity_ranges = 4; // instead: one range per row, when the
+                                         // value range provider is on the entity
+  bool allows_unassigned = 5;
+  repeated sint64 initial = 6;           // one per row; null = unassigned;
+                                         // empty = every row unassigned
+}
+
+// A genuine list variable. Its elements are rows of another class.
+message ListVariable {
+  string name = 1;
+  uint32 element_class = 2;
+  ValueRange range = 3;                  // the element rows that may be
+                                         // assigned; empty = every row
+  bool allows_unassigned_values = 4;
+  repeated LongList initial = 5;         // one list per row, as element rows;
+                                         // empty = every list empty
+}
+
+enum ShadowKind {
+  SHADOW_KIND_UNSPECIFIED = 0;
+  INVERSE_RELATION = 1;   // the entity whose list holds this element
+  INDEX = 2;              // the element's position in that list
+  PREVIOUS_ELEMENT = 3;
+  NEXT_ELEMENT = 4;
+  DECLARATIVE = 5;        // computed by a supplier method (@ShadowVariable(supplierName))
+  CASCADING_UPDATE = 6;   // @CascadingUpdateShadowVariable
+}
+
+// A shadow variable. The server computes its values from the planning
+// variables; a client never sends them.
+//
+// A list shadow follows the list variable of `source_class`. On a row that
+// no list holds, the inverse relation, the previous and the next element are
+// null, and so is the index.
+//
+// A declarative shadow variable holds what its supplier returns, evaluated
+// once the variables that its sources name have their values, and evaluated
+// again whenever one of them changes. The sources name what the supplier
+// reads, as @ShadowSources does: a variable that the supplier reads but no
+// source names does not cause a new evaluation.
+message ShadowVariable {
+  string name = 1;
+  ValueType value_type = 2;
+  ShadowKind kind = 3;
+  uint32 source_class = 4;          // list shadows: the entity class whose list
+                                    // variable holds this class's rows
+  uint32 supplier = 5;              // DECLARATIVE, CASCADING_UPDATE: an expression
+                                    // over the one-element tuple (this row)
+  repeated SourcePath sources = 6;  // DECLARATIVE: the paths of @ShadowSources
+}
+
+// A path of member reads starting at the row that owns a shadow variable.
+message SourcePath {
+  repeated MemberRef steps = 1;
+}
+
+enum MemberKind {
+  MEMBER_KIND_UNSPECIFIED = 0;
+  COLUMN = 1;
+  VARIABLE = 2;
+  LIST_VARIABLE = 3;
+  SHADOW = 4;
+}
+
+message MemberRef {
+  MemberKind kind = 1;
+  uint32 class_id = 2;
+  uint32 index = 3;                 // index into the class's columns,
+                                    // variables or shadows
+}
+
+// A function of fact rows that the client evaluated for every combination of
+// arguments, because it has no translation but depends on fixed data only.
+message LookupTable {
+  string name = 1;                  // the method's name, for messages
+  repeated uint32 arg_classes = 2;  // the class of each REF argument
+  ValueType value_type = 3;         // the result type
+  repeated sint64 values = 4;       // one per cell, last argument fastest
+  repeated double doubles = 5;      // DOUBLE results
+  repeated Decimal decimals = 6;    // BIG_DECIMAL results
+  repeated uint32 failing = 7;      // cells where the method threw; reading
+                                    // one fails
+}
+
+// ---------------------------------------------------------------------------
+// Expressions
+// ---------------------------------------------------------------------------
+
+// One node of a translated function. A function is evaluated over a tuple of
+// values (the stream's tuple, or a single row); leaves read the tuple or the
+// tables, inner nodes apply a catalog operator to the nodes in `args`.
+message Expression {
+  string op = 1;                    // a CATALOG.md key
+  repeated uint32 args = 2;         // expression ids, each lower than this one
+  ValueType value_type = 3;         // the result type
+  uint32 class_id = 4;              // column, variable, list_variable, shadow:
+                                    // the class; table: the table id
+  uint32 index = 5;                 // arg: the tuple position; column,
+                                    // variable, shadow: the member index;
+                                    // loop_var, fold: the state slot
+  sint64 value = 6;                 // const: an int64-encoded constant;
+                                    // loop_var, fold: the loop's scope id
+  double double_value = 7;          // const of kind DOUBLE
+  Decimal decimal_value = 8;        // const of kind BIG_DECIMAL
+}
+
+// ---------------------------------------------------------------------------
+// Constraint streams
+// ---------------------------------------------------------------------------
+
+enum StreamKind {
+  STREAM_KIND_UNSPECIFIED = 0;
+  // Rows of `class_id`, as forEach selects them: of an entity class only the
+  // rows whose basic variables are all assigned (and, for elements of a list
+  // variable, the assigned elements); of a fact class every row.
+  FOR_EACH = 1;
+  // Every row of `class_id` (forEachIncludingUnassigned).
+  FOR_EACH_INCLUDING_UNASSIGNED = 2;
+  // The `input` tuples for which `predicate` holds.
+  FILTER = 3;
+  // Every pair of an `input` tuple and a `right` tuple that match all
+  // joiners; the output tuple is the input elements, then the right elements.
+  JOIN = 4;
+  // The `input` tuples that match at least one `right` tuple.
+  IF_EXISTS = 5;
+  // The `input` tuples that match no `right` tuple.
+  IF_NOT_EXISTS = 6;
+  // One tuple per distinct key: the values of `functions` (the keys), then
+  // the results of `collectors` over the group's input tuples. Without keys,
+  // a single group, which exists while it has an input tuple.
+  GROUP_BY = 7;
+  // Per input tuple, the tuple of the values of `functions`.
+  MAP = 8;
+  // Per input tuple, its elements followed by the values of `functions`.
+  EXPAND = 9;
+  // Per input tuple and per element of the collection `functions[0]`
+  // (evaluated over the tuple's last element), the tuple with its last
+  // element replaced by that collection element.
+  FLATTEN_LAST = 10;
+  // The `input` tuples, then the `right` tuples. When the two arities
+  // differ, the shorter side's tuples are padded by `functions`, evaluated
+  // over that side's tuple.
+  CONCAT = 11;
+  // Each distinct `input` tuple once.
+  DISTINCT = 12;
+}
+
+enum JoinerType {
+  JOINER_TYPE_UNSPECIFIED = 0;
+  EQUAL = 1;                  // left == right
+  LESS_THAN = 2;              // left < right
+  LESS_THAN_OR_EQUAL = 3;
+  GREATER_THAN = 4;
+  GREATER_THAN_OR_EQUAL = 5;
+  CONTAINING = 6;             // the collection left contains right
+  CONTAINED_IN = 7;           // the collection right contains left
+  CONTAINING_ANY_OF = 8;      // the collections share an element
+  FILTERING = 9;              // `filter` holds for the joined tuple
+}
+
+// One joiner of a JOIN, IF_EXISTS or IF_NOT_EXISTS. Joiners.overlapping
+// arrives as its two comparisons.
+message Joiner {
+  JoinerType joiner_type = 1;
+  uint32 left = 2;            // an expression over the input tuple
+  uint32 right = 3;           // an expression over the right tuple
+  uint32 filter = 4;          // FILTERING: a BOOL expression over the input
+                              // elements followed by the right elements
+}
+
+// The collectors of ConstraintCollectors, each named after its factory method.
+enum CollectorKind {
+  COLLECTOR_KIND_UNSPECIFIED = 0;
+  COLLECT_COUNT = 1;          // the number of input tuples (LONG)
+  COLLECT_COUNT_DISTINCT = 2; // the number of distinct values of functions[0] (LONG)
+  COLLECT_SUM = 3;            // the sum of functions[0], in its kind
+  COLLECT_MIN = 4;            // the least value of functions[0]
+  COLLECT_MAX = 5;            // the greatest value of functions[0]
+  COLLECT_AVERAGE = 6;        // the average of functions[0] (DOUBLE)
+  COLLECT_TO_LIST = 7;        // the values of functions[0] (LIST)
+  COLLECT_TO_SET = 8;         // the distinct values of functions[0] (LIST)
+  // functions = [balanced item, load (LONG), initial load (LONG)]
+  COLLECT_LOAD_BALANCE = 9;
+}
+
+message Collector {
+  CollectorKind kind = 1;
+  repeated uint32 functions = 2;  // expressions over the input tuple, in the
+                                  // factory method's argument order
+  ValueType result = 3;
+}
+
+message StreamNode {
+  StreamKind kind = 1;
+  uint32 input = 2;                 // the input stream
+  uint32 right = 3;                 // JOIN, IF_EXISTS, IF_NOT_EXISTS, CONCAT:
+                                    // the second input stream
+  uint32 class_id = 4;              // FOR_EACH, FOR_EACH_INCLUDING_UNASSIGNED
+  repeated Joiner joiners = 5;      // JOIN, IF_EXISTS, IF_NOT_EXISTS
+  uint32 predicate = 6;             // FILTER: a BOOL expression over the input tuple
+  repeated uint32 functions = 7;    // GROUP_BY keys; MAP, EXPAND, FLATTEN_LAST,
+                                    // CONCAT: see StreamKind
+  repeated Collector collectors = 8; // GROUP_BY
+  repeated ValueType tuple = 9;     // the element types of the output tuple
+}
+
+enum Impact {
+  IMPACT_UNSPECIFIED = 0;
+  PENALIZE = 1;  // score −= weight × match weight; a negative match weight fails
+  REWARD = 2;    // score += weight × match weight; a negative match weight fails
+  MIXED = 3;     // score += weight × match weight (impact)
+}
+
+message ConstraintDecl {
+  string name = 1;          // the constraint's name (its id)
+  string group = 2;
+  string description = 3;
+  uint32 stream = 4;        // every tuple of this stream is a match
+  Impact impact = 5;
+  Score weight = 6;         // the constraint weight, overrides applied
+  uint32 match_weight = 7;  // an INT, LONG or BIG_DECIMAL expression over the
+                            // stream's tuple; a constant 1 when the user gave none
+}
+
+// ---------------------------------------------------------------------------
+// Solver configuration
+// ---------------------------------------------------------------------------
+
+enum EnvironmentMode {
+  ENVIRONMENT_MODE_UNSPECIFIED = 0;  // PHASE_ASSERT
+  TRACKED_FULL_ASSERT = 1;
+  FULL_ASSERT = 2;
+  NON_INTRUSIVE_FULL_ASSERT = 3;
+  STEP_ASSERT = 4;
+  PHASE_ASSERT = 5;
+  NO_ASSERT = 6;
+  NON_REPRODUCIBLE = 7;
+}
+
+// When to stop: as soon as any limit that is set is reached.
+message Termination {
+  double spent_limit_seconds = 1;              // 0 = no limit
+  double unimproved_spent_limit_seconds = 2;   // 0 = no limit
+  int64 step_count_limit = 3;                  // 0 = no limit
+  int64 unimproved_step_count_limit = 4;       // 0 = no limit
+  int64 move_count_limit = 5;                  // 0 = no limit
+  Score best_score_limit = 6;                  // unset = no limit
+  bool best_score_feasible = 7;
+}
+
+enum PhaseType {
+  PHASE_TYPE_UNSPECIFIED = 0;
+  CONSTRUCTION_HEURISTIC = 1;
+  LOCAL_SEARCH = 2;
+}
+
+message Phase {
+  PhaseType phase_type = 1;
+  Termination termination = 2;
+}
+
+message SolverConfig {
+  EnvironmentMode environment_mode = 1;
+  int64 random_seed = 2;
+  Termination termination = 3;
+  repeated Phase phases = 4;        // empty = the default phases
+}
+
+// ---------------------------------------------------------------------------
+// Answers
+// ---------------------------------------------------------------------------
+
+// The values of one basic planning variable.
+message VariableValues {
+  uint32 class_id = 1;
+  uint32 variable = 2;              // index into ClassDecl.variables
+  repeated sint64 values = 3;       // one per row; null = unassigned
+}
+
+// The lists of one class's list variable.
+message ListVariableValues {
+  uint32 class_id = 1;
+  repeated LongList lists = 2;      // one per row, as element rows
+}
+
+message Solution {
+  repeated VariableValues variables = 1;
+  repeated ListVariableValues lists = 2;
+  Score score = 3;
+}
+
+// One constraint's part of a score.
+message ConstraintResult {
+  uint32 constraint = 1;            // index into PlanningProblem.constraints
+  Score score = 2;
+  int64 match_count = 3;
+}
+
+message SolveStats {
+  double decode_seconds = 1;
+  double compile_seconds = 2;
+  double construction_seconds = 3;
+  double local_search_seconds = 4;
+  int64 move_evaluations = 5;
+  int64 steps = 6;
+  Score construction_score = 7;
+}
+
+enum ErrorKind {
+  ERROR_KIND_UNSPECIFIED = 0;
+  INVALID = 1;      // the problem breaks this schema's rules
+  UNSUPPORTED = 2;  // the problem is valid, but this server cannot solve it yet
+  USER_CODE = 3;    // a translated function failed where the original would
+                    // have thrown
+  INTERNAL = 4;
+}
+
+message Error {
+  ErrorKind kind = 1;
+  string message = 2;
+}
+
+// The answer to a synchronous solve: the best solution found, or an error.
+message SolveResult {
+  Solution solution = 1;
+  SolveStats stats = 2;
+  Error error = 3;                  // set: the solve failed, nothing else is set
+}
+
+// The answer to a score request: the problem's initial assignment, scored,
+// with each constraint's part.
+message ScoreResult {
+  Score score = 1;
+  repeated ConstraintResult constraints = 2;
+  Error error = 3;                  // set: scoring failed, nothing else is set
+}
