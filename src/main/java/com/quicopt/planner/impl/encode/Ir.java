@@ -209,7 +209,10 @@ final class Ir {
     }
 
     /**
-     * @return a Java int 0 or 1 read as a boolean, as a {@code boolean} return needs
+     * A Java int 0 or 1 read as a boolean, as a {@code boolean} return needs. An {@code ifelse} whose branches are
+     * such ints, as where branches join after {@code a && b}, becomes the boolean expression it stands for.
+     *
+     * @return the boolean
      */
     Val asBool(Val v) {
         if (v.type().kind() == Type.Kind.BOOL) {
@@ -218,6 +221,21 @@ final class Ir {
         if (isConstant(v)) {
             return bool(constantValue(v) != 0);
         }
+        var node = node(v);
+        if (node.op().equals("fail")) {
+            return add("fail", List.of(), Type.BOOL, 0, 0, 0);
+        }
+        if (node.op().equals("ifelse")) {
+            return choose(valueOf(node.args().get(0)), asBool(valueOf(node.args().get(1))),
+                    asBool(valueOf(node.args().get(2))));
+        }
         return apply("ne", Type.BOOL, v, constant(v.type(), 0));
+    }
+
+    /**
+     * @return the value of a node, with the node's own type
+     */
+    private Val valueOf(int id) {
+        return new Val(id, nodes.get(id).type());
     }
 }

@@ -23,6 +23,7 @@ import org.objectweb.asm.tree.FieldInsnNode;
 import org.objectweb.asm.tree.IincInsnNode;
 import org.objectweb.asm.tree.IntInsnNode;
 import org.objectweb.asm.tree.JumpInsnNode;
+import org.objectweb.asm.tree.LabelNode;
 import org.objectweb.asm.tree.LdcInsnNode;
 import org.objectweb.asm.tree.LineNumberNode;
 import org.objectweb.asm.tree.MethodInsnNode;
@@ -40,7 +41,7 @@ import com.quicopt.planner.impl.encode.Type.Kind;
  * inlined.
  *
  * <ul>
- * <li>A branch is followed both ways and joined into a conditional.</li>
+ * <li>A branch is followed both ways, and the two paths join again where they meet (see {@link Paths}).</li>
  * <li>A for-each loop over a list becomes a {@code fold}: the variables the body updates are the fold's state,
  * and the body is executed once on placeholders for the state and the element.</li>
  * <li>A call that has no translation but depends only on fact rows (a distance lookup in a map, say) is evaluated
@@ -54,54 +55,37 @@ final class Lifter implements Opcodes {
     private static final long MAX_TABLE_CELLS = 4_000_000;
 
     /**
-     * The symbolic machine state of one method activation.
+     * A for-each loop whose body is being executed.
+     *
+     * @param head the label its back edge jumps to, and so does a {@code continue}
+     * @param backEdge the jump that closes the body
      */
-    private static final class Frame {
-        final Val[] locals;
-        final ArrayList<Val> stack;
+    private record Loop(LabelNode head, JumpInsnNode backEdge) {
+    }
+
+    /**
+     * Executing one method or loop body along all its paths at once: the path falling through to the next
+     * instruction, the paths waiting at labels ahead of it, and for a loop body the paths that reached its end.
+     */
+    private static final class Sweep {
+        final MethodNode method;
+        final Paths paths;
+        final Loop loop;
+        final Map<LabelNode, List<Paths.Arrival>> waiting = new HashMap<>();
+        final List<Paths.Arrival> atBackEdge = new ArrayList<>();
+        Paths.Arrival current;
 
         /**
-         * @param locals the local variable slots; the stack starts empty
+         * @param method the method whose code is executed
+         * @param paths the paths, with the one path at the start
+         * @param frame the machine state at the start
+         * @param loop the loop whose body is executed, or {@code null} for a method body
          */
-        Frame(Val[] locals) {
-            this(locals, new ArrayList<>());
-        }
-
-        /**
-         * @param locals the local variable slots
-         * @param stack the operand stack
-         */
-        private Frame(Val[] locals, ArrayList<Val> stack) {
-            this.locals = locals;
-            this.stack = stack;
-        }
-
-        /**
-         * @return an independent copy, for following one side of a branch
-         */
-        Frame copy() {
-            return new Frame(locals.clone(), new ArrayList<>(stack));
-        }
-
-        /**
-         * Pushes a value.
-         */
-        void push(Val v) {
-            stack.add(v);
-        }
-
-        /**
-         * @return the popped value
-         */
-        Val pop() {
-            return stack.remove(stack.size() - 1);
-        }
-
-        /**
-         * @return the value on top of the stack, or {@code null} when it is empty
-         */
-        Val peek() {
-            return stack.isEmpty() ? null : stack.get(stack.size() - 1);
+        Sweep(MethodNode method, Paths paths, Frame frame, Loop loop) {
+            this.method = method;
+            this.paths = paths;
+            this.loop = loop;
+            this.current = paths.start(frame);
         }
     }
 
@@ -245,7 +229,7 @@ final class Lifter implements Opcodes {
         var callerLocation = location;
         depth++;
         try {
-            var result = run(method, method.instructions.getFirst(), new Frame(initialLocals(method, isStatic, args)));
+            var result = run(method, new Frame(initialLocals(method, isStatic, args)));
             location = callerLocation;
             return result;
         } finally {
@@ -275,43 +259,128 @@ final class Lifter implements Opcodes {
     }
 
     /**
-     * Runs straight-line code until a return, a throw or a branch, which it resolves recursively.
+     * Executes a method body along all its paths.
      *
-     * @return the value the code returns
+     * @return the value the method returns
      */
-    private Val run(MethodNode method, AbstractInsnNode insn, Frame frame) {
-        while (insn != null) {
-            int op = insn.getOpcode();
-            if (insn instanceof LineNumberNode line) {
-                location = method.name + " (line " + line.line + ")";
-            } else if (isLoopHead(insn, frame)) {
-                insn = foldLoop(method, (MethodInsnNode) insn, frame);
-                continue;
-            } else if (op == GOTO) {
-                insn = forwardTarget(method, (JumpInsnNode) insn);
-                continue;
-            } else if (insn instanceof JumpInsnNode jump) {
-                return branch(method, jump, frame);
-            } else if (op >= IRETURN && op <= ARETURN) {
-                return returnValue(method, frame.pop());
-            } else if (op == NEW && isThrowable((TypeInsnNode) insn)) {
-                return ir.add("fail", List.of(), Type.NULL, 0, 0, 0);
-            } else if (op >= 0) {
-                step(insn, frame);
-            }
-            insn = insn.getNext();
+    private Val run(MethodNode method, Frame frame) {
+        var sweep = new Sweep(method, new Paths(ir), frame, null);
+        execute(sweep, method.instructions.getFirst());
+        if (sweep.current != null || !sweep.waiting.isEmpty()) {
+            throw new Refusal("control flow fell off the end of " + method.name);
         }
-        throw new Refusal("control flow fell off the end of " + method.name);
+        var value = sweep.paths.value();
+        var type = returnType(method);
+        return ir.isFail(value) && value.type().kind() == Kind.NULL && type != null
+                ? ir.add("fail", List.of(), type, 0, 0, 0) : value;
     }
 
     /**
-     * @return both sides of a conditional jump, joined into one conditional expression
+     * Executes instructions in program order from {@code insn}, following every path at once: a path that jumps
+     * ahead waits at the target label until the path falling through reaches it, and they continue as one. A loop
+     * body ends at its back edge.
      */
-    private Val branch(MethodNode method, JumpInsnNode jump, Frame frame) {
-        var cond = condition(jump.getOpcode(), frame);
-        var taken = run(method, forwardTarget(method, jump), frame.copy());
-        var notTaken = run(method, jump.getNext(), frame.copy());
-        return ir.choose(cond, taken, notTaken);
+    private void execute(Sweep sweep, AbstractInsnNode insn) {
+        var end = sweep.loop == null ? null : sweep.loop.backEdge();
+        while (insn != null && insn != end) {
+            insn = executeOne(sweep, insn);
+        }
+        if (end != null && sweep.current != null) {
+            sweep.atBackEdge.add(sweep.current);
+        }
+    }
+
+    /**
+     * Executes one instruction for the path falling through it, if any.
+     *
+     * @return the next instruction to execute
+     */
+    private AbstractInsnNode executeOne(Sweep sweep, AbstractInsnNode insn) {
+        int op = insn.getOpcode();
+        if (insn instanceof LabelNode label) {
+            sweep.current = arrive(sweep, label);
+        } else if (insn instanceof LineNumberNode line) {
+            location = sweep.method.name + " (line " + line.line + ")";
+        } else if (sweep.current == null || op < 0) {
+            return insn.getNext(); // code no path reaches, or a stack map frame
+        } else if (isLoopHead(insn, sweep.current.frame())) {
+            return foldLoop(sweep.method, (MethodInsnNode) insn, sweep.current.frame());
+        } else if (insn instanceof JumpInsnNode jump) {
+            jump(sweep, jump);
+        } else if ((op >= IRETURN && op <= ARETURN) || op == ATHROW || op == NEW && isThrowable((TypeInsnNode) insn)) {
+            end(sweep, op);
+        } else {
+            step(insn, sweep.current.frame());
+        }
+        return insn.getNext();
+    }
+
+    /**
+     * Joins the paths waiting at a label with the path falling through to it.
+     *
+     * @return the one path that continues from the label, or {@code null} when none reaches it
+     */
+    private static Paths.Arrival arrive(Sweep sweep, LabelNode label) {
+        var arrivals = sweep.waiting.remove(label);
+        if (arrivals == null) {
+            return sweep.current;
+        }
+        if (sweep.current != null) {
+            arrivals.add(sweep.current);
+        }
+        return sweep.paths.join(arrivals);
+    }
+
+    /**
+     * A jump: a {@code goto} takes the falling-through path to its target, a conditional jump splits it there.
+     */
+    private void jump(Sweep sweep, JumpInsnNode jump) {
+        if (jump.getOpcode() == GOTO) {
+            wait(sweep, jump, sweep.current);
+            sweep.current = null;
+            return;
+        }
+        var condition = condition(jump.getOpcode(), sweep.current.frame());
+        var sides = sweep.paths.split(sweep.current, condition);
+        wait(sweep, jump, sides.get(0));
+        sweep.current = sides.get(1);
+    }
+
+    /**
+     * Puts a path that jumps on hold: at the label ahead, or at the end of the loop body for a jump to the loop's
+     * head (the back edge, or a {@code continue}).
+     *
+     * @throws Refusal for a jump backwards, which is a loop of another shape, or out of a loop body (a break)
+     */
+    private static void wait(Sweep sweep, JumpInsnNode jump, Paths.Arrival path) {
+        var target = jump.label;
+        if (sweep.loop != null && target == sweep.loop.head()) {
+            sweep.atBackEdge.add(path);
+            return;
+        }
+        var instructions = sweep.method.instructions;
+        if (instructions.indexOf(target) < instructions.indexOf(jump)) {
+            throw new Refusal("a loop that is not a for-each over a list");
+        }
+        if (sweep.loop != null && instructions.indexOf(target) > instructions.indexOf(sweep.loop.backEdge())) {
+            throw new Refusal("a break out of a loop");
+        }
+        sweep.waiting.computeIfAbsent(target, label -> new ArrayList<>()).add(path);
+    }
+
+    /**
+     * Ends the falling-through path at a return, or at a throw with {@code fail}.
+     *
+     * @throws Refusal inside a loop body, which a fold cannot leave early
+     */
+    private void end(Sweep sweep, int op) {
+        if (sweep.loop != null) {
+            throw new Refusal("a return or throw inside a loop");
+        }
+        var value = op >= IRETURN && op <= ARETURN ? returnValue(sweep.method, sweep.current.frame().pop())
+                : ir.add("fail", List.of(), Type.NULL, 0, 0, 0);
+        sweep.paths.end(sweep.current, value);
+        sweep.current = null;
     }
 
     /**
@@ -329,6 +398,20 @@ final class Lifter implements Opcodes {
             return type == null ? result : ir.nullOf(type);
         }
         return result;
+    }
+
+    /**
+     * @return the type of what a method returns, or {@code null} when it has no encoding
+     */
+    private Type returnType(MethodNode method) {
+        var returnType = org.objectweb.asm.Type.getReturnType(method.desc);
+        return switch (returnType.getSort()) {
+            case org.objectweb.asm.Type.BOOLEAN -> Type.BOOL;
+            case org.objectweb.asm.Type.INT, org.objectweb.asm.Type.SHORT, org.objectweb.asm.Type.BYTE -> Type.INT;
+            case org.objectweb.asm.Type.LONG -> Type.LONG;
+            case org.objectweb.asm.Type.OBJECT -> tables.typeOf(javaClass(returnType.getInternalName()));
+            default -> null;
+        };
     }
 
     /**
@@ -362,7 +445,7 @@ final class Lifter implements Opcodes {
         loopElements.put(iterator.node(), ir.add("loop_var", List.of(), iterator.type().element(), 0, 0, scope));
         Frame end;
         try {
-            end = runBody(method, exit.getNext(), body, backEdge);
+            end = runBody(method, exit.getNext(), body, new Loop(backEdge.label, backEdge));
         } finally {
             loopElements.remove(iterator.node());
         }
@@ -376,80 +459,37 @@ final class Lifter implements Opcodes {
     }
 
     /**
-     * Runs a loop body from {@code insn} to its back edge. Branches inside the body are followed both ways and
-     * their frames merged slot by slot.
+     * Executes a loop body from {@code first} to its back edge along all its paths.
      *
-     * @return the frame at the back edge
+     * @return the frame at the end of the body, merged over the paths that reach it
      * @throws Refusal for a return, a throw or a break inside the body
      */
-    private Frame runBody(MethodNode method, AbstractInsnNode insn, Frame frame, JumpInsnNode backEdge) {
-        while (insn != backEdge) {
-            int op = insn.getOpcode();
-            if (insn instanceof LineNumberNode line) {
-                location = method.name + " (line " + line.line + ")";
-            } else if (isLoopHead(insn, frame)) {
-                insn = foldLoop(method, (MethodInsnNode) insn, frame);
-                continue;
-            } else if (op == GOTO) {
-                insn = insideBody(method, (JumpInsnNode) insn, backEdge);
-                continue;
-            } else if (insn instanceof JumpInsnNode jump) {
-                var cond = condition(op, frame);
-                var taken = runBody(method, insideBody(method, jump, backEdge), frame.copy(), backEdge);
-                var notTaken = runBody(method, jump.getNext(), frame.copy(), backEdge);
-                return merge(cond, taken, notTaken);
-            } else if ((op >= IRETURN && op <= RETURN) || op == ATHROW || op == NEW && isThrowable((TypeInsnNode) insn)) {
-                throw new Refusal("a return or throw inside a loop");
-            } else if (op >= 0) {
-                step(insn, frame);
-            }
-            insn = insn.getNext();
+    private Frame runBody(MethodNode method, AbstractInsnNode first, Frame frame, Loop loop) {
+        var sweep = new Sweep(method, new Paths(ir), frame, loop);
+        execute(sweep, first);
+        if (sweep.atBackEdge.isEmpty()) {
+            throw new Refusal("a loop body that never reaches its end");
         }
-        return frame;
+        return sweep.paths.join(sweep.atBackEdge).frame();
     }
 
     /**
-     * @return the frame after two branches of a loop body: each local is {@code cond ? taken : notTaken}
-     */
-    private Frame merge(Val cond, Frame taken, Frame notTaken) {
-        var locals = new Val[taken.locals.length];
-        for (int slot = 0; slot < locals.length; slot++) {
-            var a = taken.locals[slot];
-            var b = notTaken.locals[slot];
-            locals[slot] = (a == null || b == null) ? null : ir.choose(cond, a, b);
-        }
-        return new Frame(locals);
-    }
-
-    /**
-     * A jump's target inside the loop body. A jump past the back edge is a break, a backward jump a
-     * {@code continue} or an inner loop of another shape; both are refused.
-     *
-     * @return the target
-     */
-    private static AbstractInsnNode insideBody(MethodNode method, JumpInsnNode jump, JumpInsnNode backEdge) {
-        int index = method.instructions.indexOf(jump.label);
-        if (index > method.instructions.indexOf(backEdge)) {
-            throw new Refusal("a break out of a loop");
-        }
-        if (index < method.instructions.indexOf(jump)) {
-            throw new Refusal("a continue, or a loop that is not a for-each over a list");
-        }
-        return jump.label;
-    }
-
-    /**
-     * @return the {@code goto head} that closes the loop whose head is {@code hasNext} and exit {@code exit}
+     * @return the {@code goto head} that closes the loop whose head is {@code hasNext} and exit {@code exit}: the
+     *         last jump back to the head before the exit, since a {@code continue} jumps there too
      */
     private static JumpInsnNode backEdge(MethodNode method, MethodInsnNode hasNext, JumpInsnNode exit) {
         int head = method.instructions.indexOf(hasNext);
         int end = method.instructions.indexOf(exit.label);
+        JumpInsnNode last = null;
         for (var insn = exit.getNext(); insn != null && method.instructions.indexOf(insn) < end; insn = insn.getNext()) {
             if (insn.getOpcode() == GOTO && method.instructions.indexOf(((JumpInsnNode) insn).label) < head) {
-                return (JumpInsnNode) insn;
+                last = (JumpInsnNode) insn;
             }
         }
-        throw new Refusal("a loop without a back edge");
+        if (last == null) {
+            throw new Refusal("a loop without a back edge");
+        }
+        return last;
     }
 
     /**
@@ -483,8 +523,9 @@ final class Lifter implements Opcodes {
     private Val condition(int op, Frame frame) {
         if (op >= IFEQ && op <= IFLE) {
             var v = frame.pop();
-            if (v.type().kind() == Kind.BOOL && (op == IFEQ || op == IFNE)) {
-                return op == IFNE ? v : ir.not(v);
+            if ((op == IFEQ || op == IFNE) && (v.type().kind() == Kind.BOOL || ir.node(v).op().equals("ifelse"))) {
+                var b = ir.asBool(v); // a boolean, or an int that branches joined from 0 and 1
+                return op == IFNE ? b : ir.not(b);
             }
             return ir.apply(comparison(op - IFEQ), Type.BOOL, v, ir.constant(v.type(), 0));
         }
@@ -537,7 +578,11 @@ final class Lifter implements Opcodes {
     private void step(AbstractInsnNode insn, Frame frame) {
         int op = insn.getOpcode();
         if (op >= ILOAD && op <= ALOAD) {
-            frame.push(frame.locals[((VarInsnNode) insn).var]);
+            var value = frame.locals[((VarInsnNode) insn).var];
+            if (value == null) {
+                throw new Refusal("a local variable that holds values of different types on different paths");
+            }
+            frame.push(value);
         } else if (op >= ISTORE && op <= ASTORE) {
             frame.locals[((VarInsnNode) insn).var] = frame.pop();
         } else if (op == IINC) {
@@ -753,17 +798,6 @@ final class Lifter implements Opcodes {
             slot += type.getSize();
         }
         return locals;
-    }
-
-    /**
-     * @return the jump's target
-     * @throws Refusal for a backward jump, which would be a loop of a shape the lifter does not fold
-     */
-    private static AbstractInsnNode forwardTarget(MethodNode method, JumpInsnNode jump) {
-        if (method.instructions.indexOf(jump.label) < method.instructions.indexOf(jump)) {
-            throw new Refusal("a loop that is not a for-each over a list");
-        }
-        return jump.label;
     }
 
     /**
