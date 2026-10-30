@@ -171,15 +171,7 @@ final class Lifter implements Opcodes {
      */
     private void requireSignsComparedWithZero(Val value) {
         var nodes = ir.nodes();
-        var reached = new java.util.BitSet();
-        var pending = new java.util.ArrayDeque<Integer>(List.of(value.node()));
-        while (!pending.isEmpty()) {
-            int id = pending.pop();
-            if (!reached.get(id)) {
-                reached.set(id);
-                nodes.get(id).args().forEach(pending::push);
-            }
-        }
+        var reached = ir.reachedFrom(value.node());
         var signs = new java.util.BitSet();
         for (int id = reached.nextSetBit(0); id >= 0; id = reached.nextSetBit(id + 1)) { // operands come first
             var node = nodes.get(id);

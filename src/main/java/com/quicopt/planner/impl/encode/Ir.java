@@ -69,6 +69,22 @@ final class Ir {
     }
 
     /**
+     * @return the ids of the nodes that a node reaches through its operands, itself included
+     */
+    java.util.BitSet reachedFrom(int root) {
+        var reached = new java.util.BitSet();
+        var pending = new java.util.ArrayDeque<Integer>(List.of(root));
+        while (!pending.isEmpty()) {
+            int id = pending.pop();
+            if (!reached.get(id)) {
+                reached.set(id);
+                nodes.get(id).args().forEach(pending::push);
+            }
+        }
+        return reached;
+    }
+
+    /**
      * @return a fresh loop scope id
      */
     int newScope() {

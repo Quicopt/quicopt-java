@@ -3,6 +3,7 @@
 package com.quicopt.planner.impl.encode;
 
 import java.lang.reflect.Field;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -173,14 +174,104 @@ public final class WireEncoder {
             case NEXT -> wire.setKind(ShadowKind.NEXT_ELEMENT).setSourceClass(listOwner(owner, shadow).id);
             case INDEX -> wire.setKind(ShadowKind.INDEX).setSourceClass(listOwner(owner, shadow).id);
             case SUPPLIER -> {
-                wire.setKind(ShadowKind.DECLARATIVE).setSupplier(lifter.liftMethod(owner, shadow.method()).node());
+                var supplier = lifter.liftMethod(owner, shadow.method());
+                var sources = new ArrayList<SourcePath>();
                 for (String path : sourcePaths(owner, shadow.method())) {
-                    wire.addSources(sourcePath(owner, path));
+                    sources.add(sourcePath(owner, path));
                 }
+                requireDeclaredReads(shadow, supplier, sources);
+                wire.setKind(ShadowKind.DECLARATIVE).setSupplier(supplier.node()).addAllSources(sources);
             }
             case CASCADING -> throw new Refusal("the cascading update shadow variable " + shadow.field().getName());
         }
         return wire.build();
+    }
+
+    /**
+     * Checks that a supplier reads no variable its sources leave out. A supplier is evaluated again only when one
+     * of its sources changes, so a variable it reads that no source names would go stale. A read is named when its
+     * path of member reads from the supplier's own row is a prefix of a source path; reads of facts need no name.
+     *
+     * @throws Refusal for a variable read that no source path names, and for one through anything other than member
+     *         reads from the supplier's row, which no source path can name
+     */
+    private void requireDeclaredReads(ShadowInfo shadow, Ir.Val supplier, List<SourcePath> sources) {
+        var paths = new HashMap<Integer, List<MemberRef>>();
+        var reached = ir.reachedFrom(supplier.node());
+        for (int id = reached.nextSetBit(0); id >= 0; id = reached.nextSetBit(id + 1)) { // operands come first
+            var node = ir.nodes().get(id);
+            var path = readPath(node, paths);
+            paths.put(id, path);
+            if (!node.op().equals("variable") && !node.op().equals("list_variable") && !node.op().equals("shadow")) {
+                continue;
+            }
+            var supplierName = "the supplier " + shadow.method() + " of " + shadow.field().getName();
+            if (path == null) {
+                throw new Refusal(supplierName + " reads " + pathName(List.of(step(node))) + " of an object it does"
+                        + " not reach by member reads from its own entity, which no @ShadowSources path can name");
+            }
+            if (sources.stream().noneMatch(source -> isPrefix(path, source.getStepsList()))) {
+                throw new Refusal(supplierName + " reads " + pathName(path) + ", which its @ShadowSources do not"
+                        + " name: the shadow variable would not be updated when that changes");
+            }
+        }
+    }
+
+    /**
+     * @return the member reads that lead from a supplier's own row to the value of a node: empty for the row
+     *         itself, {@code null} when the node is not reached by member reads alone
+     */
+    private static List<MemberRef> readPath(Ir.Node node, Map<Integer, List<MemberRef>> paths) {
+        var step = step(node);
+        if (step == null) {
+            return node.op().equals("arg") && node.index() == 0 ? List.of() : null;
+        }
+        var row = paths.get(node.args().get(0));
+        if (row == null) {
+            return null;
+        }
+        var path = new ArrayList<>(row);
+        path.add(step);
+        return path;
+    }
+
+    /**
+     * @return the member a node reads, as a source path names it, or {@code null} for a node that reads no member
+     */
+    private static MemberRef step(Ir.Node node) {
+        var kind = switch (node.op()) {
+            case "variable" -> MemberKind.VARIABLE;
+            case "list_variable" -> MemberKind.LIST_VARIABLE;
+            case "shadow" -> MemberKind.SHADOW;
+            case "column" -> MemberKind.COLUMN;
+            default -> null;
+        };
+        return kind == null ? null
+                : MemberRef.newBuilder().setKind(kind).setClassId(node.classId()).setIndex(node.index()).build();
+    }
+
+    /**
+     * @return whether the first steps of {@code path} are {@code prefix}
+     */
+    private static boolean isPrefix(List<MemberRef> prefix, List<MemberRef> path) {
+        return prefix.size() <= path.size() && path.subList(0, prefix.size()).equals(prefix);
+    }
+
+    /**
+     * @return a path of member reads as the field names it reads, joined by dots
+     */
+    private String pathName(List<MemberRef> path) {
+        var names = new ArrayList<String>();
+        for (MemberRef step : path) {
+            var info = tables.classes.get(step.getClassId());
+            var field = switch (step.getKind()) {
+                case VARIABLE, LIST_VARIABLE -> info.variables.get(step.getIndex()).field();
+                case SHADOW -> info.shadows.get(step.getIndex()).field();
+                default -> info.columns.get(step.getIndex()).field();
+            };
+            names.add(field == null ? "@PlanningId rank" : field.getName());
+        }
+        return String.join(".", names);
     }
 
     /**

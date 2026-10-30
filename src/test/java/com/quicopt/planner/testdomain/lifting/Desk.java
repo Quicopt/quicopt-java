@@ -25,6 +25,13 @@ public class Desk {
         this.number = number;
     }
 
+    /**
+     * @return the desk's number
+     */
+    public long getNumber() {
+        return number;
+    }
+
     @Override
     public boolean equals(Object other) {
         return other instanceof Desk desk && desk.number == number;

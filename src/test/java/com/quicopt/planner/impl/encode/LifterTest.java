@@ -12,6 +12,8 @@ import java.util.List;
 import com.quicopt.planner.testdomain.lifting.BranchConstraints;
 import com.quicopt.planner.testdomain.lifting.Comparisons;
 import com.quicopt.planner.testdomain.lifting.Desk;
+import com.quicopt.planner.testdomain.lifting.Label;
+import com.quicopt.planner.testdomain.lifting.LabelPlan;
 import com.quicopt.planner.testdomain.lifting.LoopConstraints;
 import com.quicopt.planner.testdomain.lifting.OrganizedWeek;
 import com.quicopt.planner.testdomain.lifting.Organizer;
@@ -129,6 +131,18 @@ class LifterTest {
         var stop = route.getStops().get(0);
         route.getCouriers().get(0).getStops().add(new Stop(stop.getId(), stop.getX(), stop.getY(), stop.getDueTime()));
         assertThrows(IllegalStateException.class, () -> FunctionCheck.encode(route, RouteConstraints.class));
+    }
+
+    /**
+     * A supplier is evaluated again only when a source changes, so a variable it reads that no source names is
+     * refused. Courier routes name all they read and pass, which the encoding of the route model shows.
+     */
+    @Test
+    void suppliersReadOnlyWhatTheirSourcesName() {
+        var plan = new LabelPlan(List.of(new Desk(0), new Desk(1)), List.of(new Label(0)));
+        var refusal = assertThrows(Refusal.class, () -> FunctionCheck.encode(plan, LabelPlan.Constraints.class));
+        assertTrue(refusal.getMessage().contains("reads backupDesk"), refusal.getMessage());
+        FunctionCheck.encode(RoutePlan.smallTown(), RouteConstraints.class);
     }
 
     /**
