@@ -149,6 +149,7 @@ public final class ProblemTables {
     private final Map<Class<?>, ClassInfo> byType = new HashMap<>();
     private final Map<String, Long> stringIds = new HashMap<>();
     private final Map<ClassInfo, Boolean> identityEquality = new HashMap<>();
+    private final Map<Class<?>, java.util.Optional<Class<?>>> reachedEntities = new HashMap<>();
 
     /**
      * Reads the solution's annotated collections into tables, then the entity classes' genuine and shadow
@@ -489,6 +490,67 @@ public final class ProblemTables {
             ranks[sorted.get(rank)] = rank;
         }
         return ranks;
+    }
+
+    /**
+     * An entity class that an object of the given class can reach through its fields, transitively. A field can
+     * hold an entity when its declared type, a type argument of it or its element type is a supertype of an entity
+     * class; a type variable, a wildcard or a collection without type arguments can hold anything.
+     *
+     * @return such an entity class, or {@code null} when the class reaches none
+     */
+    Class<?> entityReachedFrom(Class<?> type) {
+        return reachedEntities.computeIfAbsent(type, t -> java.util.Optional.ofNullable(searchEntity(t))).orElse(null);
+    }
+
+    /**
+     * @return {@link #entityReachedFrom}, searched through the fields
+     */
+    private Class<?> searchEntity(Class<?> type) {
+        var seen = new HashSet<Class<?>>();
+        var pending = new ArrayList<Class<?>>(List.of(type));
+        while (!pending.isEmpty()) {
+            var current = pending.remove(pending.size() - 1);
+            if (!seen.add(current)) {
+                continue;
+            }
+            for (Field field : Members.allFields(current)) {
+                var generic = field.getGenericType();
+                boolean raw = generic instanceof Class<?> c && (Collection.class.isAssignableFrom(c)
+                        || Map.class.isAssignableFrom(c)); // a collection without type arguments holds anything
+                for (Class<?> held : raw ? List.<Class<?>> of(Object.class) : namedClasses(generic)) {
+                    var entity = classes.stream().filter(c -> c.entity && held.isAssignableFrom(c.type)).findFirst();
+                    if (entity.isPresent()) {
+                        return entity.get().type;
+                    }
+                    if (!held.isPrimitive() && !held.isEnum() && !isValueClass(held)) {
+                        pending.add(held);
+                    }
+                }
+            }
+        }
+        return null;
+    }
+
+    /**
+     * @return the classes a declared type names: the type itself, its type arguments and its array element, with
+     *         {@code Object} for a type variable or a wildcard
+     */
+    private static List<Class<?>> namedClasses(java.lang.reflect.Type generic) {
+        if (generic instanceof Class<?> type) {
+            return type.isArray() ? namedClasses(type.getComponentType()) : List.of(type);
+        }
+        if (generic instanceof ParameterizedType parameterized) {
+            var named = new ArrayList<Class<?>>(namedClasses(parameterized.getRawType()));
+            for (var argument : parameterized.getActualTypeArguments()) {
+                named.addAll(namedClasses(argument));
+            }
+            return named;
+        }
+        if (generic instanceof java.lang.reflect.GenericArrayType array) {
+            return namedClasses(array.getGenericComponentType());
+        }
+        return List.of(Object.class);
     }
 
     /**

@@ -3,15 +3,21 @@
 package com.quicopt.planner.impl.encode;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.quicopt.planner.testdomain.lifting.BranchConstraints;
 import com.quicopt.planner.testdomain.lifting.Comparisons;
 import com.quicopt.planner.testdomain.lifting.LoopConstraints;
+import com.quicopt.planner.testdomain.lifting.OrganizedWeek;
+import com.quicopt.planner.testdomain.lifting.Organizer;
+import com.quicopt.planner.testdomain.lifting.OrganizerConstraints;
 import com.quicopt.planner.testdomain.lifting.ProviderConstraints;
+import com.quicopt.planner.testdomain.meetings.Meeting;
 import com.quicopt.planner.testdomain.meetings.MeetingConstraints;
 import com.quicopt.planner.testdomain.meetings.MeetingPlan;
+import com.quicopt.planner.testdomain.meetings.Room;
 import com.quicopt.planner.testdomain.routes.RouteConstraints;
 import com.quicopt.planner.testdomain.routes.RoutePlan;
 
@@ -84,6 +90,20 @@ class LifterTest {
     @Test
     void continueSkipsTheRestOfTheBody() {
         assertAgrees(FunctionCheck.run(RoutePlan.smallTown(), LoopConstraints.class, 20, 4));
+    }
+
+    /**
+     * A method on fact rows that has no translation is computed in advance, as a table, unless the rows can reach
+     * an entity through their fields: the table would miss the entity's changes.
+     */
+    @Test
+    void tablesNeverDependOnEntities() {
+        var week = OrganizedWeek.of(MeetingPlan.smallWeek());
+        var tables = new ProblemTables(week);
+        assertEquals(Meeting.class, tables.entityReachedFrom(Organizer.class));
+        assertNull(tables.entityReachedFrom(Room.class));
+        var refusal = assertThrows(Refusal.class, () -> FunctionCheck.encode(week, OrganizerConstraints.class));
+        assertTrue(refusal.getMessage().contains("Meeting entities"), refusal.getMessage());
     }
 
     /**

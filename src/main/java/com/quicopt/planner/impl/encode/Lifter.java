@@ -268,7 +268,7 @@ final class Lifter implements Opcodes {
             if (table != null) {
                 return table;
             }
-            throw new Refusal("a call to " + owner.replace('/', '.') + "." + name);
+            throw new Refusal("a call to " + owner.replace('/', '.') + "." + name + whyNotTabulated(args));
         }
         var callerLocation = location;
         try {
@@ -276,11 +276,29 @@ final class Lifter implements Opcodes {
         } catch (Refusal refusal) {
             var table = tabulate(owner, name, desc, isStatic, args);
             if (table == null) {
-                throw refusal; // keeps the callee's location, where the refusal happened
+                var why = whyNotTabulated(args); // keeps the callee's location, where the refusal happened
+                throw why.isEmpty() ? refusal : new Refusal(refusal.getMessage() + why);
             }
             location = callerLocation;
             return table;
         }
+    }
+
+    /**
+     * @return why a call on fact rows was not tabulated, when a row can reach an entity whose changes the table
+     *         would miss; empty otherwise
+     */
+    private String whyNotTabulated(List<Val> args) {
+        for (Val arg : args) {
+            if (arg.type().kind() == Kind.REF && !arg.type().refClass().entity) {
+                var entity = tables.entityReachedFrom(arg.type().refClass().type);
+                if (entity != null) {
+                    return "; it cannot be computed in advance either, since " + arg.type() + " objects can reach "
+                            + entity.getSimpleName() + " entities through their fields";
+                }
+            }
+        }
+        return "";
     }
 
     /**
@@ -305,12 +323,14 @@ final class Lifter implements Opcodes {
 
     /**
      * A call whose arguments, the receiver included, are all rows of fact classes, evaluated in Java for every
-     * combination of rows and replaced by a lookup in that table.
+     * combination of rows and replaced by a lookup in that table. A row that can reach an entity through its fields
+     * disqualifies the call: the table would not change when the entity does.
      *
      * @return the lookup, or {@code null} when the call does not qualify
      */
     private Val tabulate(String owner, String name, String desc, boolean isStatic, List<Val> args) {
-        if (args.isEmpty() || !args.stream().allMatch(a -> a.type().kind() == Kind.REF && !a.type().refClass().entity)) {
+        if (args.isEmpty() || !args.stream().allMatch(a -> a.type().kind() == Kind.REF && !a.type().refClass().entity
+                && tables.entityReachedFrom(a.type().refClass().type) == null)) {
             return null;
         }
         var receiver = isStatic ? javaClass(owner) : args.get(0).type().refClass().type;
