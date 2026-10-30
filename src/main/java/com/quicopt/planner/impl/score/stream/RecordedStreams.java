@@ -9,6 +9,7 @@ import java.lang.reflect.Proxy;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
 import com.quicopt.planner.api.score.stream.Constraint;
@@ -17,6 +18,7 @@ import com.quicopt.planner.api.score.stream.ConstraintProvider;
 import com.quicopt.planner.api.score.stream.bi.BiConstraintStream;
 import com.quicopt.planner.api.score.stream.tri.TriConstraintStream;
 import com.quicopt.planner.api.score.stream.uni.UniConstraintStream;
+import com.quicopt.planner.config.util.ConfigUtils;
 import com.quicopt.planner.impl.encode.Refusal;
 import com.quicopt.planner.impl.encode.TaggingClassLoader;
 
@@ -56,14 +58,27 @@ public final class RecordedStreams {
     }
 
     /**
-     * Instantiates the provider class through a {@link TaggingClassLoader}, so that the lambdas it creates can be
-     * traced back to their code, and records its constraints.
+     * Records the constraints of a provider without custom properties; see {@link #record(Class, Map)}.
      *
+     * @return one {@code asConstraint} node per constraint, in the provider's order
+     */
+    public static List<Node> record(Class<? extends ConstraintProvider> providerClass) {
+        return record(providerClass, null);
+    }
+
+    /**
+     * Instantiates the provider class through a {@link TaggingClassLoader}, so that the lambdas it creates can be
+     * traced back to their code, sets the configuration's custom properties on it through their setters, and
+     * records its constraints.
+     *
+     * @param customProperties the configuration's {@code constraintProviderCustomProperties}, or {@code null}
      * @return one {@code asConstraint} node per constraint, in the provider's order
      * @throws Refusal when a stream method returns something that cannot be recorded
      * @throws IllegalArgumentException when the provider cannot be instantiated
+     * @throws IllegalStateException when a custom property has no setter, or a value its setter cannot take
      */
-    public static List<Node> record(Class<? extends ConstraintProvider> providerClass) {
+    public static List<Node> record(Class<? extends ConstraintProvider> providerClass,
+            Map<String, String> customProperties) {
         ConstraintProvider provider;
         try {
             var loader = new TaggingClassLoader(providerClass.getClassLoader(), providerClass.getName());
@@ -75,6 +90,8 @@ public final class RecordedStreams {
             throw new IllegalArgumentException("The constraint provider " + providerClass.getName()
                     + " cannot be instantiated through its constructor without parameters.", e);
         }
+        ConfigUtils.applyCustomProperties(provider, "constraintProviderClass", customProperties,
+                "constraintProviderCustomProperties");
         var factory = (ConstraintFactory) recordingProxy(ConstraintFactory.class, null);
         var constraints = new ArrayList<Node>();
         for (Constraint constraint : provider.defineConstraints(factory)) {

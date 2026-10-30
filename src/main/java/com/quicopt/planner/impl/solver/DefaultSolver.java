@@ -10,49 +10,57 @@ import com.quicopt.planner.api.score.stream.ConstraintProvider;
 import com.quicopt.planner.api.solver.Solver;
 import com.quicopt.planner.api.solver.change.ProblemChange;
 import com.quicopt.planner.api.solver.event.SolverEventListener;
-import com.quicopt.planner.config.solver.SolverConfig;
-import com.quicopt.planner.config.solver.termination.TerminationConfig;
 import com.quicopt.planner.impl.encode.ProblemTables;
 import com.quicopt.planner.impl.encode.WireEncoder;
 import com.quicopt.planner.impl.score.stream.RecordedStreams;
 import com.quicopt.planner.wire.SolveResult;
+import com.quicopt.planner.wire.SolverConfig;
 
 /**
  * A solver whose solving happens on the planner service: {@link #solve} sends the problem with the model's
- * translated constraints, waits for the answer, and returns a planning clone of the problem with the answer
- * written into it.
+ * translated constraints and the solver's settings, waits for the answer, and returns a planning clone of the
+ * problem with the answer written into it.
  *
  * @param <Solution_> the solution type, the class with the {@code PlanningSolution} annotation
  */
 final class DefaultSolver<Solution_> implements Solver<Solution_> {
 
-    private final SolverConfig config;
-    private final TerminationConfig termination;
+    private final SolverConfig settings;
+    private final List<Class<?>> entityClasses;
     private final Class<? extends ConstraintProvider> providerClass;
     private final List<RecordedStreams.Node> constraints;
     private final PlannerService service;
     private volatile boolean solving;
 
     /**
-     * @param config the solver configuration
-     * @param termination the termination to use, the configuration's own or an override
+     * @param settings the solver settings as the wire carries them: environment mode, seed and termination
+     * @param entityClasses the configuration's entity classes, which every problem's entities must be of
      * @param providerClass the constraint provider class
      * @param constraints the provider's recorded constraints
      * @param service the planner service to solve on
      */
-    DefaultSolver(SolverConfig config, TerminationConfig termination, Class<? extends ConstraintProvider> providerClass,
-            List<RecordedStreams.Node> constraints, PlannerService service) {
-        this.config = config;
-        this.termination = termination;
+    DefaultSolver(SolverConfig settings, List<Class<?>> entityClasses,
+            Class<? extends ConstraintProvider> providerClass, List<RecordedStreams.Node> constraints,
+            PlannerService service) {
+        this.settings = settings;
+        this.entityClasses = entityClasses;
         this.providerClass = providerClass;
         this.constraints = constraints;
         this.service = service;
     }
 
     /**
+     * @return the settings that travel with every problem this solver sends
+     */
+    SolverConfig settings() {
+        return settings;
+    }
+
+    /**
      * Solves a problem on the service; the problem itself is left unchanged.
      *
      * @return a planning clone of the problem with the best solution's variables, shadow variables and score
+     * @throws IllegalArgumentException when the problem holds entities of a class the configuration does not list
      */
     @Override
     public Solution_ solve(Solution_ problem) {
@@ -60,8 +68,8 @@ final class DefaultSolver<Solution_> implements Solver<Solution_> {
         solving = true;
         try {
             var scoreClass = WireEncoder.scoreClass(problem.getClass());
-            var settings = SolverSettings.wire(config, termination, scoreClass);
             var tables = new ProblemTables(problem);
+            SolverSettings.requireListed(entityClasses, tables);
             var bytes = new WireEncoder(tables, providerClass.getClassLoader()).encode(constraints, settings).toByteArray();
             var result = SolveResult.parseFrom(service.post("/v1/planner/solve", bytes));
             if (result.hasError()) {
