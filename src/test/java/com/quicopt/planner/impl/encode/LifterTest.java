@@ -3,12 +3,14 @@
 package com.quicopt.planner.impl.encode;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.quicopt.planner.testdomain.lifting.BranchConstraints;
 import com.quicopt.planner.testdomain.lifting.LoopConstraints;
 import com.quicopt.planner.testdomain.meetings.MeetingConstraints;
 import com.quicopt.planner.testdomain.meetings.MeetingPlan;
+import com.quicopt.planner.testdomain.routes.RouteConstraints;
 import com.quicopt.planner.testdomain.routes.RoutePlan;
 
 import org.junit.jupiter.api.Test;
@@ -32,6 +34,26 @@ class LifterTest {
     @Test
     void meetingFunctionsAgree() {
         assertAgrees(FunctionCheck.run(MeetingPlan.smallWeek(), MeetingConstraints.class, 20, 1));
+    }
+
+    /**
+     * A boxed shadow variable that may be null, unboxed where Java unboxes it, and a loop over a list variable.
+     */
+    @Test
+    void routeFunctionsAgree() {
+        assertAgrees(FunctionCheck.run(RoutePlan.smallTown(), RouteConstraints.class, 20, 2));
+    }
+
+    /**
+     * The wire has no null boolean, and a boxed Long equal to {@code Long.MIN_VALUE} would read as null there; a
+     * primitive long may hold it.
+     */
+    @Test
+    void valuesTheWireReadsAsNullAreRefused() {
+        assertThrows(Refusal.class, () -> new Ir().nullOf(Type.BOOL));
+        assertThrows(Refusal.class, () -> ProblemTables.requireNotNullEncoding(Long.class, Long.MIN_VALUE));
+        ProblemTables.requireNotNullEncoding(long.class, Long.MIN_VALUE);
+        ProblemTables.requireNotNullEncoding(Long.class, Long.MIN_VALUE + 1);
     }
 
     /**

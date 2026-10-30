@@ -100,8 +100,12 @@ final class Ir {
 
     /**
      * @return the null of a type: -1 for a row, {@link Type#NULL_LONG} otherwise
+     * @throws Refusal for a Boolean, which the planner wire cannot carry as null
      */
     Val nullOf(Type type) {
+        if (type.kind() == Type.Kind.BOOL) {
+            throw new Refusal("a null Boolean (the planner wire has no null boolean)");
+        }
         return constant(type, type.kind() == Type.Kind.REF ? -1 : Type.NULL_LONG);
     }
 

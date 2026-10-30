@@ -67,18 +67,27 @@ public final class LambdaRegistry {
     }
 
     /**
+     * A value a lambda captured.
+     *
+     * @param type the declared type of the captured variable, which tells a boxed value from a primitive one
+     * @param value the value
+     */
+    record Captured(Class<?> type, Object value) {
+    }
+
+    /**
      * @return the values a lambda captured, in the order they precede its own parameters
      * @throws IllegalStateException when the lambda's fields cannot be read
      */
-    static List<Object> capturedValues(Object lambda) {
-        var values = new ArrayList<>();
+    static List<Captured> capturedValues(Object lambda) {
+        var values = new ArrayList<Captured>();
         for (Field field : lambda.getClass().getDeclaredFields()) {
             if (Modifier.isStatic(field.getModifiers())) {
                 continue;
             }
             try {
                 field.setAccessible(true);
-                values.add(field.get(lambda));
+                values.add(new Captured(field.getType(), field.get(lambda)));
             } catch (ReflectiveOperationException | RuntimeException e) {
                 throw new IllegalStateException("Cannot read the values captured by " + lambda, e);
             }

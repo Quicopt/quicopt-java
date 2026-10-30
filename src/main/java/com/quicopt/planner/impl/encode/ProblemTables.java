@@ -331,10 +331,13 @@ public final class ProblemTables {
 
     /**
      * @return the number that stands for a value on the wire
-     * @throws Refusal for a kind that is not number-encoded
+     * @throws Refusal for a kind that is not number-encoded, and for a null Boolean
      */
     long encode(Type type, Object value) {
         if (value == null) {
+            if (type.kind() == Type.Kind.BOOL) {
+                throw new Refusal("a null Boolean (the planner wire has no null boolean)");
+            }
             return type.kind() == Type.Kind.REF ? -1 : Type.NULL_LONG;
         }
         return switch (type.kind()) {
@@ -373,17 +376,45 @@ public final class ProblemTables {
 
     /**
      * @return a column's values, one per row of its class; a list column's values are the elements, concatenated
+     * @throws Refusal naming the field for a value the wire cannot carry
      */
     long[] columnValues(ClassInfo owner, ColumnInfo column) {
         if (column.field() == null) {
             return java.util.Arrays.stream(planningIdRanks(owner)).asLongStream().toArray();
         }
-        if (column.type().kind() == Type.Kind.LIST) {
-            return owner.rows.stream().flatMap(row -> ((Collection<?>) Members.read(column.field(), row)).stream())
-                    .mapToLong(element -> encode(column.type().element(), element)).toArray();
+        var field = column.field();
+        try {
+            if (column.type().kind() == Type.Kind.LIST) {
+                return owner.rows.stream().flatMap(row -> ((Collection<?>) Members.read(field, row)).stream())
+                        .mapToLong(element -> encodeBoxed(column.type().element(), Long.class, element)).toArray();
+            }
+            return owner.rows.stream()
+                    .mapToLong(row -> encodeBoxed(column.type(), field.getType(), Members.read(field, row))).toArray();
+        } catch (Refusal refusal) {
+            throw new Refusal("the field " + owner.type.getSimpleName() + "." + field.getName() + " holds "
+                    + refusal.getMessage());
         }
-        return owner.rows.stream().mapToLong(row -> encode(column.type(), Members.read(column.field(), row)))
-                .toArray();
+    }
+
+    /**
+     * {@link #encode} for a value read from a field, a collection or a method of the given declared type.
+     *
+     * @return the number that stands for the value
+     * @throws Refusal for a boxed Long that holds {@code Long.MIN_VALUE}, which the wire would read as null
+     */
+    long encodeBoxed(Type type, Class<?> declared, Object value) {
+        requireNotNullEncoding(declared, value);
+        return encode(type, value);
+    }
+
+    /**
+     * @throws Refusal for a boxed Long that holds {@code Long.MIN_VALUE}, the encoding of null; a primitive long
+     *         holding it is fine, since nothing compares a primitive with null
+     */
+    static void requireNotNullEncoding(Class<?> declared, Object value) {
+        if (declared == Long.class && value instanceof Long l && l == Type.NULL_LONG) {
+            throw new Refusal("a Long equal to Long.MIN_VALUE (the planner wire reads it as null)");
+        }
     }
 
     /**
@@ -418,7 +449,7 @@ public final class ProblemTables {
         }
         var values = new long[(int) cells];
         for (int cell = 0; cell < cells; cell++) {
-            values[cell] = encode(result, invokeAt(method, argClasses, cell));
+            values[cell] = encodeBoxed(result, method.getReturnType(), invokeAt(method, argClasses, cell));
         }
         var table = new TableInfo(tables.size(), method, List.copyOf(argClasses), result, values);
         tables.add(table);

@@ -165,21 +165,43 @@ final class Intrinsics {
     }
 
     /**
-     * @return boxing and unboxing, which leave the encoded value unchanged; parsing ({@code valueOf(String)}) is
-     *         not boxing and gets no translation
+     * Boxing and unboxing. Boxing leaves the encoded value unchanged. Unboxing an Integer or a Long is
+     * {@code unbox}, which fails on null as Java does; a Boolean is never null on the wire, so its unboxing is the
+     * value itself. Parsing ({@code valueOf(String)}) is not boxing and gets no translation.
+     *
+     * @return the translation, or {@code null} for another method
      */
     private Val boxing(String name, List<Val> a) {
         var kind = a.get(0).type().kind();
         boolean numeric = kind == Kind.INT || kind == Kind.LONG;
         return switch (name) {
             case "valueOf" -> numeric || kind == Kind.BOOL ? a.get(0) : null;
-            case "intValue", "longValue" -> !numeric ? null
-                    : name.equals("longValue") && kind == Kind.INT ? ir.apply("i2l", Type.LONG, a.get(0))
-                    : name.equals("intValue") && kind == Kind.LONG ? ir.apply("l2i", Type.INT, a.get(0))
-                    : a.get(0);
+            case "intValue" -> numeric ? converted(unbox(a.get(0)), Type.INT) : null;
+            case "longValue" -> numeric ? converted(unbox(a.get(0)), Type.LONG) : null;
             case "booleanValue" -> kind == Kind.BOOL ? a.get(0) : null;
             default -> null;
         };
+    }
+
+    /**
+     * @return {@code unbox(v)}; a constant other than the null needs no check and stays itself
+     */
+    private Val unbox(Val v) {
+        if (ir.isConstant(v) && ir.constantValue(v) != Type.NULL_LONG) {
+            return v;
+        }
+        return ir.apply("unbox", v.type(), v);
+    }
+
+    /**
+     * @return an int or long value converted to the other kind as Java's {@code (int)} and {@code (long)} do, or
+     *         unchanged when it has the kind already
+     */
+    private Val converted(Val v, Type to) {
+        if (v.type().kind() == to.kind()) {
+            return v;
+        }
+        return ir.apply(to.kind() == Kind.LONG ? "i2l" : "l2i", to, v);
     }
 
     /**

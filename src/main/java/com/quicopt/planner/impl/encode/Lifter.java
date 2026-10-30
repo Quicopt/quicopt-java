@@ -134,8 +134,8 @@ final class Lifter implements Opcodes {
             throw new Refusal("a function created outside the constraint provider: " + lambda);
         }
         var args = new ArrayList<Val>();
-        for (Object captured : LambdaRegistry.capturedValues(lambda)) {
-            args.add(constantOf(captured));
+        for (var captured : LambdaRegistry.capturedValues(lambda)) {
+            args.add(constantOf(captured.type(), captured.value()));
         }
         args.addAll(elements);
         var impl = site.implMethod();
@@ -724,10 +724,20 @@ final class Lifter implements Opcodes {
         try {
             var field = javaClass(insn.owner).getDeclaredField(insn.name);
             field.setAccessible(true);
-            return constantOf(field.get(null));
+            return constantOf(field.getType(), field.get(null));
         } catch (ReflectiveOperationException e) {
             throw new Refusal("the static field " + insn.owner + "." + insn.name);
         }
+    }
+
+    /**
+     * @param declared the declared type of the variable or field that holds the value
+     * @return a Java value known now, as a constant
+     * @throws Refusal for a boxed Long that holds the null encoding
+     */
+    private Val constantOf(Class<?> declared, Object value) {
+        ProblemTables.requireNotNullEncoding(declared, value);
+        return constantOf(value);
     }
 
     /**
