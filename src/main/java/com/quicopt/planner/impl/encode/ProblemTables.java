@@ -46,6 +46,7 @@ public final class ProblemTables {
         final List<VariableInfo> variables = new ArrayList<>();
         final List<ShadowInfo> shadows = new ArrayList<>();
         final List<ColumnInfo> columns = new ArrayList<>();
+        private Map<Object, Integer> rowOfPlanningId;
 
         /**
          * @param id the class's index in the wire's class table
@@ -103,6 +104,31 @@ public final class ProblemTables {
          */
         public List<ShadowInfo> shadows() {
             return shadows;
+        }
+
+        /**
+         * The row that an object stands for without being it, as a copy deserialized apart from the row does: the
+         * row with the same {@code @PlanningId}, provided the object also equals it.
+         *
+         * @return the row, or {@code null} when the class has no planning id or no row qualifies
+         * @throws Refusal when two rows share a planning id
+         */
+        Integer rowOfCopy(Object value) {
+            var idField = planningIdField(type);
+            if (idField == null || !type.isInstance(value)) {
+                return null;
+            }
+            if (rowOfPlanningId == null) {
+                rowOfPlanningId = new HashMap<>();
+                for (int row = 0; row < rows.size(); row++) {
+                    var id = Members.read(idField, rows.get(row));
+                    if (id != null && rowOfPlanningId.put(id, row) != null) {
+                        throw new Refusal("two " + type.getSimpleName() + " objects with the planning id " + id);
+                    }
+                }
+            }
+            var row = rowOfPlanningId.get(Members.read(idField, value));
+            return row != null && rows.get(row).equals(value) ? row : null;
         }
     }
 
@@ -356,14 +382,19 @@ public final class ProblemTables {
     }
 
     /**
-     * @return the row of an object in its class's table
+     * @return the row of an object in its class's table: the object's own row, or the row a copy of it stands for
+     *         (see {@link ClassInfo#rowOfCopy})
      * @throws IllegalStateException when the object is not in the table, which would otherwise be sent as a null
      */
     private static int rowOf(ClassInfo info, Object value) {
         var row = info.rowOf.get(value);
         if (row == null) {
+            row = info.rowOfCopy(value);
+        }
+        if (row == null) {
             throw new IllegalStateException("The " + info.type.getSimpleName() + " " + value
-                    + " is not in the solution's collection of that class.");
+                    + " is not in the solution's collection of that class, and equals no object there with its"
+                    + " planning id.");
         }
         return row;
     }
@@ -480,8 +511,7 @@ public final class ProblemTables {
      * @return each row's rank in {@code @PlanningId} order, or in row order when the class has no planning id
      */
     int[] planningIdRanks(ClassInfo info) {
-        var idField = Members.allFields(info.type).stream()
-                .filter(f -> f.isAnnotationPresent(PlanningId.class)).findFirst().orElse(null);
+        var idField = planningIdField(info.type);
         Comparator<Integer> order = idField == null ? Comparator.naturalOrder()
                 : Comparator.comparing(row -> comparableId(idField, info.rows.get(row)));
         var sorted = IntStream.range(0, info.rows.size()).boxed().sorted(order).toList();
@@ -490,6 +520,14 @@ public final class ProblemTables {
             ranks[sorted.get(rank)] = rank;
         }
         return ranks;
+    }
+
+    /**
+     * @return the field with the {@code @PlanningId} annotation of a class or its superclasses, or {@code null}
+     */
+    static Field planningIdField(Class<?> type) {
+        return Members.allFields(type).stream().filter(f -> f.isAnnotationPresent(PlanningId.class)).findFirst()
+                .orElse(null);
     }
 
     /**

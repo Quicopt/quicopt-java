@@ -7,19 +7,25 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.util.List;
+
 import com.quicopt.planner.testdomain.lifting.BranchConstraints;
 import com.quicopt.planner.testdomain.lifting.Comparisons;
+import com.quicopt.planner.testdomain.lifting.Desk;
 import com.quicopt.planner.testdomain.lifting.LoopConstraints;
 import com.quicopt.planner.testdomain.lifting.OrganizedWeek;
 import com.quicopt.planner.testdomain.lifting.Organizer;
 import com.quicopt.planner.testdomain.lifting.OrganizerConstraints;
 import com.quicopt.planner.testdomain.lifting.ProviderConstraints;
+import com.quicopt.planner.testdomain.lifting.Visitor;
+import com.quicopt.planner.testdomain.lifting.VisitorPlan;
 import com.quicopt.planner.testdomain.meetings.Meeting;
 import com.quicopt.planner.testdomain.meetings.MeetingConstraints;
 import com.quicopt.planner.testdomain.meetings.MeetingPlan;
 import com.quicopt.planner.testdomain.meetings.Room;
 import com.quicopt.planner.testdomain.routes.RouteConstraints;
 import com.quicopt.planner.testdomain.routes.RoutePlan;
+import com.quicopt.planner.testdomain.routes.Stop;
 
 import org.junit.jupiter.api.Test;
 
@@ -32,7 +38,7 @@ class LifterTest {
      * Fails with every disagreement when the check found any, and when it compared nothing.
      */
     static void assertAgrees(FunctionCheck.Report report) {
-        assertEquals(java.util.List.of(), report.mismatches());
+        assertEquals(List.of(), report.mismatches());
         assertTrue(report.checks() > report.bothFailed(), "nothing was compared without a throw: " + report);
     }
 
@@ -104,6 +110,25 @@ class LifterTest {
         assertNull(tables.entityReachedFrom(Room.class));
         var refusal = assertThrows(Refusal.class, () -> FunctionCheck.encode(week, OrganizerConstraints.class));
         assertTrue(refusal.getMessage().contains("Meeting entities"), refusal.getMessage());
+    }
+
+    /**
+     * A reference to a copy of a row stands for the row when the copy has the row's planning id and equals it, as
+     * desks with the same number do; a copy that does not equal the row, and an object no row stands for, are
+     * refused.
+     */
+    @Test
+    void copiesOfRowsAreMatchedByPlanningId() {
+        var desks = List.of(new Desk(0), new Desk(1));
+        var copied = new VisitorPlan(desks, List.of(new Visitor(0, new Desk(1)), new Visitor(1, desks.get(0))));
+        var problem = FunctionCheck.encode(copied, VisitorPlan.Constraints.class);
+        assertEquals(List.of(1L, 0L), problem.getClasses(1).getVariables(0).getInitialList());
+        var stranger = new VisitorPlan(desks, List.of(new Visitor(0, new Desk(7))));
+        assertThrows(IllegalStateException.class, () -> FunctionCheck.encode(stranger, VisitorPlan.Constraints.class));
+        var route = RoutePlan.smallTown();
+        var stop = route.getStops().get(0);
+        route.getCouriers().get(0).getStops().add(new Stop(stop.getId(), stop.getX(), stop.getY(), stop.getDueTime()));
+        assertThrows(IllegalStateException.class, () -> FunctionCheck.encode(route, RouteConstraints.class));
     }
 
     /**
