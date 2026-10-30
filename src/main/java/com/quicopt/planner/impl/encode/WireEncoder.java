@@ -464,7 +464,7 @@ public final class WireEncoder {
             case REF -> ValueKind.REF;
             case LIST -> ValueKind.LIST;
             case LOAD_BALANCE -> ValueKind.LOAD_BALANCE;
-            case ITERATOR, NULL -> throw new Refusal("a value of kind " + type.kind() + " on the wire");
+            case ITERATOR, NULL, OBJECT -> throw new Refusal("a value of kind " + type.kind() + " on the wire");
         });
         if (type.refClass() != null) {
             wire.setRefClass(type.refClass().id);

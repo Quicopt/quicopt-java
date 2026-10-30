@@ -19,7 +19,8 @@ import java.util.Collection;
  * <li>{@code LIST} a collection of {@code element}s, {@code LOAD_BALANCE} the result of the {@code loadBalance}
  * collector;</li>
  * <li>{@code ITERATOR} an iterator over a list, which exists only while a loop is folded and never reaches the
- * wire; {@code NULL} the type of a {@code null} literal before its context gives it one.</li>
+ * wire; {@code NULL} the type of a {@code null} literal before its context gives it one; {@code OBJECT} an object
+ * the lifter knows while it translates, such as the constraint provider, which never reaches the wire either.</li>
  * </ul>
  *
  * A null is -1 for a {@code REF} and {@link #NULL_LONG} for the number-encoded kinds.
@@ -34,7 +35,7 @@ public record Type(Kind kind, ProblemTables.ClassInfo refClass, Type element, Cl
     /** The kinds of value. */
     public enum Kind {
         BOOL, INT, LONG, DOUBLE, BIG_DECIMAL, STRING, ENUM, TIME, DATE, DATETIME, DURATION, REF, LIST,
-        LOAD_BALANCE, ITERATOR, NULL
+        LOAD_BALANCE, ITERATOR, NULL, OBJECT
     }
 
     /** The encoding of a null time, date, duration or number. */
@@ -89,6 +90,13 @@ public record Type(Kind kind, ProblemTables.ClassInfo refClass, Type element, Cl
     }
 
     /**
+     * @return the type of an object of a class that the lifter knows while it translates
+     */
+    static Type object(Class<?> type) {
+        return new Type(Kind.OBJECT, null, null, type);
+    }
+
+    /**
      * @return whether values of this type are encoded as one 64-bit integer
      */
     boolean isNumberEncoded() {
@@ -106,7 +114,7 @@ public record Type(Kind kind, ProblemTables.ClassInfo refClass, Type element, Cl
         return switch (kind) {
             case REF -> refClass.type.getSimpleName();
             case LIST -> "List<" + element + ">";
-            case ENUM -> javaType.getSimpleName();
+            case ENUM, OBJECT -> javaType.getSimpleName();
             default -> kind.toString();
         };
     }

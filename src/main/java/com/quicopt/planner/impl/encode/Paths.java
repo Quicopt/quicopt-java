@@ -187,6 +187,9 @@ final class Paths {
         if (a == null || b == null) {
             return null;
         }
+        if (a.known() != null || b.known() != null) {
+            return a.known() == b.known() ? a : null; // no expression chooses between two objects the lifter knows
+        }
         if (a.equals(b)) {
             return a;
         }
@@ -219,10 +222,24 @@ final class Paths {
             case null -> throw new Refusal("a path that neither returns nor throws");
             case End end -> end.value();
             case Join join -> valueAt(join.point(), memo);
-            case Split split -> ir.choose(split.condition(), valueAt(split.taken(), memo),
+            case Split split -> choose(split.condition(), valueAt(split.taken(), memo),
                     valueAt(split.notTaken(), memo));
         };
         memo.put(point, value);
         return value;
+    }
+
+    /**
+     * @return {@code condition ? a : b} for what two paths return
+     * @throws Refusal for two different objects the lifter knows, which no expression can choose between
+     */
+    private Val choose(Val condition, Val a, Val b) {
+        if (a.known() != null || b.known() != null) {
+            if (a.known() == b.known()) {
+                return a;
+            }
+            throw new Refusal("an object that depends on a branch: " + a.type() + " or " + b.type());
+        }
+        return ir.choose(condition, a, b);
     }
 }

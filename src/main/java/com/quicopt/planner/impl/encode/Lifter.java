@@ -140,10 +140,23 @@ final class Lifter implements Opcodes {
         args.addAll(elements);
         var impl = site.implMethod();
         try {
-            return call(impl.getOwner(), impl.getName(), impl.getDesc(), impl.getTag() == H_INVOKESTATIC, args);
+            return sendable(call(impl.getOwner(), impl.getName(), impl.getDesc(), impl.getTag() == H_INVOKESTATIC,
+                    args));
         } catch (Refusal refusal) {
             throw located(refusal);
         }
+    }
+
+    /**
+     * @return a translated function's value, once it is checked to be something the wire can carry
+     * @throws Refusal for an object the lifter knows, which is neither a planning object nor a value
+     */
+    private static Val sendable(Val value) {
+        if (value.known() != null) {
+            throw new Refusal("a function whose value is the object " + value.type()
+                    + ", which is neither a planning object nor a value");
+        }
+        return value;
     }
 
     /**
@@ -170,7 +183,7 @@ final class Lifter implements Opcodes {
         var self = ir.add("arg", List.of(), Type.ref(owner), owner.id, 0, 0);
         var desc = org.objectweb.asm.Type.getMethodDescriptor(method);
         try {
-            return call(org.objectweb.asm.Type.getInternalName(owner.type), name, desc, false, List.of(self));
+            return sendable(call(org.objectweb.asm.Type.getInternalName(owner.type), name, desc, false, List.of(self)));
         } catch (Refusal refusal) {
             throw located(refusal);
         }
@@ -539,10 +552,16 @@ final class Lifter implements Opcodes {
             if (a.type().kind() == Kind.NULL && b.type().kind() == Kind.NULL) {
                 return ir.bool(op == IF_ACMPEQ);
             }
+            if (a.known() != null || b.known() != null) {
+                return ir.bool((a.known() == b.known()) == (op == IF_ACMPEQ)); // a known object is never null
+            }
             return ir.apply(op == IF_ACMPEQ ? "eq" : "ne", Type.BOOL, identityComparable(a, b), identityComparable(b, a));
         }
         if (op == IFNULL || op == IFNONNULL) {
             var v = frame.pop();
+            if (v.known() != null) {
+                return ir.bool(op == IFNONNULL);
+            }
             return ir.apply(op == IFNULL ? "eq" : "ne", Type.BOOL, v, ir.nullOf(v.type()));
         }
         throw new Refusal("the jump instruction " + op);
@@ -691,9 +710,14 @@ final class Lifter implements Opcodes {
     }
 
     /**
-     * @return a field read: a genuine variable, a shadow variable, or a fact column registered on first use
+     * @return a field read: a genuine variable, a shadow variable, a fact column registered on first use, or for an
+     *         object the lifter knows the field's value now
      */
     private Val getField(FieldInsnNode insn, Val object) {
+        if (object.known() != null) {
+            var field = findField(object.known().getClass(), insn.name);
+            return constantOf(field.getType(), Members.read(field, object.known()));
+        }
         var owner = object.type().kind() == Kind.REF ? object.type().refClass() : null;
         if (owner == null) {
             throw new Refusal("reads field " + insn.name + " of a " + object.type() + ", not of a planning object");
@@ -766,8 +790,8 @@ final class Lifter implements Opcodes {
     }
 
     /**
-     * @return a temporal, decimal or row value known now, as a constant
-     * @throws Refusal for a value of any other type
+     * @return a temporal, decimal or row value known now, as a constant; any other object, such as the constraint
+     *         provider or a helper object a function captured, as an object the lifter knows
      */
     private Val temporalOrRowConstant(Object value) {
         if (value instanceof LocalTime t) {
@@ -789,7 +813,7 @@ final class Lifter implements Opcodes {
         if (info != null) {
             return ir.constant(Type.ref(info), tables.encode(Type.ref(info), value));
         }
-        throw new Refusal("the captured value " + value + " of type " + value.getClass().getName());
+        return Ir.known(value);
     }
 
     /**
@@ -832,10 +856,11 @@ final class Lifter implements Opcodes {
      * @return the class that declares the implementation a virtual call reaches for this receiver
      */
     private String declaringClass(String owner, String name, String desc, Val receiver) {
-        if (receiver.type().kind() != Kind.REF) {
+        if (receiver.type().kind() != Kind.REF && receiver.known() == null) {
             return owner;
         }
-        for (Class<?> c = receiver.type().refClass().type; c != null && c != Object.class; c = c.getSuperclass()) {
+        var start = receiver.known() != null ? receiver.known().getClass() : receiver.type().refClass().type;
+        for (Class<?> c = start; c != null && c != Object.class; c = c.getSuperclass()) {
             var internalName = org.objectweb.asm.Type.getInternalName(c);
             if (classNode(internalName).methods.stream().anyMatch(m -> m.name.equals(name) && m.desc.equals(desc))) {
                 return internalName;

@@ -30,10 +30,20 @@ final class Ir {
     /**
      * A value on the lifter's symbolic stack.
      *
-     * @param node the id of the node that computes it
+     * @param node the id of the node that computes it, or -1 for an object the lifter knows
      * @param type its type, which may refine the node's (a boolean read as an int, say)
+     * @param known the object itself when the lifter knows it, such as the constraint provider; {@code null}
+     *        otherwise
      */
-    record Val(int node, Type type) {
+    record Val(int node, Type type, Object known) {
+
+        /**
+         * @param node the id of the node that computes the value
+         * @param type its type
+         */
+        Val(int node, Type type) {
+            this(node, type, null);
+        }
     }
 
     private final List<Node> nodes = new ArrayList<>();
@@ -49,8 +59,12 @@ final class Ir {
 
     /**
      * @return the node behind a value
+     * @throws Refusal for an object the lifter knows, which has no node
      */
     Node node(Val v) {
+        if (v.known() != null) {
+            throw new Refusal("the object " + v.type() + " used as a value (only its methods and fields can be used)");
+        }
         return nodes.get(v.node());
     }
 
@@ -62,9 +76,20 @@ final class Ir {
     }
 
     /**
+     * @return an object the lifter knows: it has no node, and can only be called or have its fields read
+     */
+    static Val known(Object object) {
+        return new Val(-1, Type.object(object.getClass()), object);
+    }
+
+    /**
      * @return the value of a new node, or of the equal node already present
+     * @throws Refusal when an operand is an object the lifter knows, which has no node
      */
     Val add(String op, List<Integer> args, Type type, int classId, int index, long value) {
+        if (args.contains(-1)) {
+            throw new Refusal("an object used as a value in " + op + " (only its methods and fields can be used)");
+        }
         var node = new Node(op, List.copyOf(args), type, classId, index, value);
         int id = ids.computeIfAbsent(node, n -> {
             nodes.add(n);

@@ -8,6 +8,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.quicopt.planner.testdomain.lifting.BranchConstraints;
 import com.quicopt.planner.testdomain.lifting.LoopConstraints;
+import com.quicopt.planner.testdomain.lifting.ProviderConstraints;
 import com.quicopt.planner.testdomain.meetings.MeetingConstraints;
 import com.quicopt.planner.testdomain.meetings.MeetingPlan;
 import com.quicopt.planner.testdomain.routes.RouteConstraints;
@@ -65,6 +66,15 @@ class LifterTest {
         assertAgrees(FunctionCheck.run(MeetingPlan.smallWeek(), BranchConstraints.class, 20, 3));
         var problem = FunctionCheck.encode(MeetingPlan.smallWeek(), BranchConstraints.class);
         assertTrue(problem.getExpressionsCount() < 400, problem.getExpressionsCount() + " expressions");
+    }
+
+    /**
+     * A function may call the provider's own methods, read its fields and use the objects it holds: they are known
+     * while the function is translated.
+     */
+    @Test
+    void providerMethodsAndFieldsAreInlined() {
+        assertAgrees(FunctionCheck.run(MeetingPlan.smallWeek(), ProviderConstraints.class, 20, 5));
     }
 
     /**
