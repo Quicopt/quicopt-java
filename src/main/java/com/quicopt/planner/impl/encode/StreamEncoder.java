@@ -238,8 +238,11 @@ final class StreamEncoder {
                 .setRight(firsts).addJoiners(Joiner.newBuilder().setJoinerType(JoinerType.EQUAL)
                         .setLeft(arg(type, 0).node()).setRight(arg(type, 0).node())), List.of(type));
         var concat = StreamNode.newBuilder().setKind(StreamKind.CONCAT).setInput(input).setRight(missing);
-        for (Object padding : node.args().subList(1, node.args().size())) {
-            concat.addFunctions(lifter.lift(padding, List.of(type)).node());
+        var paddings = node.args().subList(1, node.args().size());
+        for (int i = 0; i < paddings.size(); i++) {
+            var padding = lifter.lift(paddings.get(i), List.of(type));
+            var padded = inputTuple.get(i + 1);
+            concat.addFunctions(padding.type().kind() == Type.Kind.NULL ? ir.nullOf(padded).node() : padding.node());
         }
         return add(concat, inputTuple);
     }

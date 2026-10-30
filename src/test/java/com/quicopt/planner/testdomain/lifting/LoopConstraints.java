@@ -10,7 +10,7 @@ import com.quicopt.planner.testdomain.routes.Courier;
 import com.quicopt.planner.testdomain.routes.Stop;
 
 /**
- * A loop whose body skips some elements.
+ * Functions over a courier's list of stops: a loop whose body skips some stops, and a search for a null stop.
  */
 public class LoopConstraints implements ConstraintProvider {
 
@@ -20,7 +20,11 @@ public class LoopConstraints implements ConstraintProvider {
                 factory.forEach(Courier.class)
                         .filter(courier -> westernRows(courier) > 5)
                         .penalize(HardSoftScore.ONE_SOFT, LoopConstraints::westernRows)
-                        .asConstraint("Western rows")
+                        .asConstraint("Western rows"),
+                factory.forEach(Courier.class)
+                        .filter(courier -> courier.getStops().contains(null))
+                        .penalize(HardSoftScore.ONE_HARD)
+                        .asConstraint("Null stop")
         };
     }
 

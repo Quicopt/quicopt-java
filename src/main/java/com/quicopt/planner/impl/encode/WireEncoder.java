@@ -6,6 +6,7 @@ import java.lang.reflect.Field;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.function.IntUnaryOperator;
 
 import com.quicopt.planner.api.domain.solution.PlanningScore;
 import com.quicopt.planner.api.domain.variable.ShadowSources;
@@ -21,6 +22,7 @@ import com.quicopt.planner.wire.ClassDecl;
 import com.quicopt.planner.wire.Column;
 import com.quicopt.planner.wire.Decimal;
 import com.quicopt.planner.wire.Expression;
+import com.quicopt.planner.wire.JoinerType;
 import com.quicopt.planner.wire.ListVariable;
 import com.quicopt.planner.wire.LongList;
 import com.quicopt.planner.wire.LookupTable;
@@ -33,6 +35,7 @@ import com.quicopt.planner.wire.ShadowKind;
 import com.quicopt.planner.wire.ShadowVariable;
 import com.quicopt.planner.wire.SolverConfig;
 import com.quicopt.planner.wire.SourcePath;
+import com.quicopt.planner.wire.StreamNode;
 import com.quicopt.planner.wire.ValueKind;
 import com.quicopt.planner.wire.ValueRange;
 import com.quicopt.planner.wire.ValueType;
@@ -77,8 +80,8 @@ public final class WireEncoder {
         for (ClassInfo info : tables.classes) {
             problem.addClasses(classDecl(info, shadows));
         }
-        ir.nodes().forEach(node -> problem.addExpressions(expression(node)));
         problem.addAllStreams(streams.streams);
+        writeExpressions(problem);
         for (ProblemTables.TableInfo table : tables.tables) {
             problem.addTables(table(table));
         }
@@ -347,16 +350,94 @@ public final class WireEncoder {
     }
 
     /**
-     * One expression node. A {@code BigDecimal} constant keeps its scale in the node's index. The lifter gives every
-     * null literal it uses the type of its context, but the untyped original stays in the table; such a dead node
-     * is written as a LONG.
+     * Writes the expressions that some function reaches, in their order, and points every reference at their new
+     * ids. The lifter leaves nodes behind that no function reaches: the untyped original of a null that its context
+     * typed, the branches of a merge that folded away, the inlined code of a call that became a table.
+     */
+    private void writeExpressions(PlanningProblem.Builder problem) {
+        var nodes = ir.nodes();
+        var reached = new boolean[nodes.size()];
+        forEachExpressionRef(problem, id -> {
+            reached[id] = true;
+            return id;
+        });
+        for (int id = nodes.size() - 1; id >= 0; id--) { // operands have lower ids than the nodes using them
+            if (reached[id]) {
+                nodes.get(id).args().forEach(arg -> reached[arg] = true);
+            }
+        }
+        var renumbered = new int[nodes.size()];
+        for (int id = 0; id < nodes.size(); id++) {
+            if (reached[id]) {
+                renumbered[id] = problem.getExpressionsCount();
+                problem.addExpressions(expression(nodes.get(id), renumbered));
+            }
+        }
+        forEachExpressionRef(problem, id -> renumbered[id]);
+    }
+
+    /**
+     * Replaces every expression id that the problem's constraints, streams and shadow variables refer to by
+     * {@code f} of it: match weights, predicates, functions, joiners, collectors and suppliers.
+     */
+    private static void forEachExpressionRef(PlanningProblem.Builder problem, IntUnaryOperator f) {
+        for (var constraint : problem.getConstraintsBuilderList()) {
+            constraint.setMatchWeight(f.applyAsInt(constraint.getMatchWeight()));
+        }
+        for (var stream : problem.getStreamsBuilderList()) {
+            streamRefs(stream, f);
+        }
+        for (var decl : problem.getClassesBuilderList()) {
+            for (var shadow : decl.getShadowsBuilderList()) {
+                if (shadow.getKind() == ShadowKind.DECLARATIVE || shadow.getKind() == ShadowKind.CASCADING_UPDATE) {
+                    shadow.setSupplier(f.applyAsInt(shadow.getSupplier()));
+                }
+            }
+        }
+    }
+
+    /**
+     * {@link #forEachExpressionRef} for one stream node, by its kind.
+     */
+    private static void streamRefs(StreamNode.Builder stream, IntUnaryOperator f) {
+        switch (stream.getKind()) {
+            case FILTER -> stream.setPredicate(f.applyAsInt(stream.getPredicate()));
+            case JOIN, IF_EXISTS, IF_NOT_EXISTS -> stream.getJoinersBuilderList().forEach(joiner -> {
+                if (joiner.getJoinerType() == JoinerType.FILTERING) {
+                    joiner.setFilter(f.applyAsInt(joiner.getFilter()));
+                } else {
+                    joiner.setLeft(f.applyAsInt(joiner.getLeft())).setRight(f.applyAsInt(joiner.getRight()));
+                }
+            });
+            case GROUP_BY, MAP, EXPAND, FLATTEN_LAST, CONCAT -> {
+                for (int i = 0; i < stream.getFunctionsCount(); i++) {
+                    stream.setFunctions(i, f.applyAsInt(stream.getFunctions(i)));
+                }
+                for (var collector : stream.getCollectorsBuilderList()) {
+                    for (int i = 0; i < collector.getFunctionsCount(); i++) {
+                        collector.setFunctions(i, f.applyAsInt(collector.getFunctions(i)));
+                    }
+                }
+            }
+            default -> {
+            }
+        }
+    }
+
+    /**
+     * One expression node, its operands renumbered. A {@code BigDecimal} constant keeps its scale in the node's
+     * index.
      *
      * @return the node as the wire carries it
+     * @throws Refusal for a null whose kind nothing in its function tells
      */
-    private static Expression expression(Ir.Node node) {
-        var type = node.type().kind() == Type.Kind.NULL ? Type.LONG : node.type();
-        var wire = Expression.newBuilder().setOp(node.op()).addAllArgs(node.args()).setValueType(valueType(type))
+    private static Expression expression(Ir.Node node, int[] renumbered) {
+        if (node.type().kind() == Type.Kind.NULL) {
+            throw new Refusal("a null whose kind nothing in its function tells (" + node.op() + ")");
+        }
+        var wire = Expression.newBuilder().setOp(node.op()).setValueType(valueType(node.type()))
                 .setClassId(node.classId());
+        node.args().forEach(arg -> wire.addArgs(renumbered[arg]));
         if (node.op().equals("const") && node.type().kind() == Type.Kind.BIG_DECIMAL) {
             return wire.setDecimalValue(Decimal.newBuilder().setUnscaled(node.value()).setScale(node.index())).build();
         }

@@ -14,6 +14,9 @@ import java.util.Set;
 import com.quicopt.planner.api.score.stream.Constraint;
 import com.quicopt.planner.api.score.stream.ConstraintFactory;
 import com.quicopt.planner.api.score.stream.ConstraintProvider;
+import com.quicopt.planner.api.score.stream.bi.BiConstraintStream;
+import com.quicopt.planner.api.score.stream.tri.TriConstraintStream;
+import com.quicopt.planner.api.score.stream.uni.UniConstraintStream;
 import com.quicopt.planner.impl.encode.Refusal;
 import com.quicopt.planner.impl.encode.TaggingClassLoader;
 
@@ -25,8 +28,9 @@ import com.quicopt.planner.impl.encode.TaggingClassLoader;
  * <li>An abstract method of the stream interfaces becomes a node.</li>
  * <li>A default method runs as the API defines it, on the proxy, so it records the abstract methods it calls:
  * {@code penalize(weight)} becomes {@code penalize(weight, one)}, for example.</li>
- * <li>{@code complement} is the exception: its default body only works on the solver's own stream classes, so it is
- * recorded as a node, and the encoder expands it the same way.</li>
+ * <li>{@code complement} with a padding function for every element after the first is the exception: its default
+ * body only works on the solver's own stream classes, so it is recorded as a node, and the encoder expands it the
+ * same way. Its shorter overloads run as defined, padding with null.</li>
  * </ul>
  */
 public final class RecordedStreams {
@@ -121,6 +125,17 @@ public final class RecordedStreams {
     }
 
     /**
+     * @return whether a method is the {@code complement} overload that takes a padding function for every element
+     *         of its stream's tuple after the first, whose default body needs the solver's own stream classes
+     */
+    private static boolean isPaddedComplement(Method method) {
+        var stream = method.getDeclaringClass();
+        int arity = stream == UniConstraintStream.class ? 1 : stream == BiConstraintStream.class ? 2
+                : stream == TriConstraintStream.class ? 3 : 4;
+        return method.getName().equals("complement") && method.getParameterCount() == arity;
+    }
+
+    /**
      * @return the answer to one call on a recorded object: a default method's own result, or a new recorded object
      */
     private static Object handle(Object self, Node node, Method method, Object[] args) throws Throwable {
@@ -134,7 +149,7 @@ public final class RecordedStreams {
             default:
                 break;
         }
-        if (method.isDefault() && !method.getName().equals("complement")) {
+        if (method.isDefault() && !isPaddedComplement(method)) {
             return invokeDefault(self, method, args);
         }
         if (method.getName().equals("getConstraintFactory")) {

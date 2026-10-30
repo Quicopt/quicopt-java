@@ -152,9 +152,10 @@ final class Intrinsics {
     private Val collection(String name, List<Val> a) {
         return switch (name) {
             case "contains" -> {
-                requireList(a.get(0));
-                equality(new Val(a.get(1).node(), a.get(0).type().element()), a.get(1));
-                yield ir.apply("contains", Type.BOOL, a.get(0), a.get(1));
+                var element = requireList(a.get(0)).type().element();
+                var sought = a.get(1).type().kind() == Kind.NULL ? ir.nullOf(element) : a.get(1);
+                equality(new Val(sought.node(), element), sought);
+                yield ir.apply("contains", Type.BOOL, a.get(0), sought);
             }
             case "size" -> ir.apply("size", Type.INT, requireList(a.get(0)));
             case "isEmpty" -> ir.apply("eq", Type.BOOL, ir.apply("size", Type.INT, requireList(a.get(0))),

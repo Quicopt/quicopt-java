@@ -13,6 +13,7 @@ import com.quicopt.planner.api.score.HardSoftScore;
 import com.quicopt.planner.api.score.stream.Constraint;
 import com.quicopt.planner.api.score.stream.ConstraintFactory;
 import com.quicopt.planner.api.score.stream.ConstraintProvider;
+import com.quicopt.planner.api.score.stream.Joiners;
 import com.quicopt.planner.impl.encode.ProblemTables;
 import com.quicopt.planner.impl.encode.Refusal;
 import com.quicopt.planner.impl.encode.WireEncoder;
@@ -20,6 +21,7 @@ import com.quicopt.planner.impl.score.stream.RecordedStreams;
 import com.quicopt.planner.testdomain.meetings.Meeting;
 import com.quicopt.planner.testdomain.meetings.MeetingConstraints;
 import com.quicopt.planner.testdomain.meetings.MeetingPlan;
+import com.quicopt.planner.testdomain.meetings.Room;
 import com.quicopt.planner.testdomain.routes.RouteConstraints;
 import com.quicopt.planner.testdomain.routes.RoutePlan;
 import com.quicopt.planner.wire.ClassDecl;
@@ -101,6 +103,70 @@ class EncoderTest {
     void loopsBecomeFolds() {
         var problem = encode(RoutePlan.smallTown(), RouteConstraints.class);
         assertTrue(problem.getExpressionsList().stream().map(Expression::getOp).anyMatch("fold"::equals));
+    }
+
+    /**
+     * Only expressions that a constraint, stream or supplier reaches are sent.
+     */
+    @Test
+    void everyExpressionSentIsReached() {
+        for (var problem : List.of(encode(MeetingPlan.smallWeek(), MeetingConstraints.class),
+                encode(RoutePlan.smallTown(), RouteConstraints.class),
+                encode(MeetingPlan.smallWeek(), UnplacedConstraints.class))) {
+            var reached = new boolean[problem.getExpressionsCount()];
+            problem.getConstraintsList().forEach(c -> reached[c.getMatchWeight()] = true);
+            for (var stream : problem.getStreamsList()) {
+                if (stream.getKind() == StreamKind.FILTER) {
+                    reached[stream.getPredicate()] = true;
+                }
+                stream.getFunctionsList().forEach(f -> reached[f] = true);
+                stream.getJoinersList().forEach(j -> reached[j.getLeft()] = reached[j.getRight()] = true);
+                stream.getCollectorsList().forEach(c -> c.getFunctionsList().forEach(f -> reached[f] = true));
+            }
+            problem.getClassesList().forEach(c -> c.getShadowsList().stream()
+                    .filter(s -> s.getKind() == ShadowKind.DECLARATIVE).forEach(s -> reached[s.getSupplier()] = true));
+            for (int id = reached.length - 1; id >= 0; id--) {
+                if (reached[id]) {
+                    problem.getExpressions(id).getArgsList().forEach(arg -> reached[arg] = true);
+                }
+            }
+            for (int id = 0; id < reached.length; id++) {
+                assertTrue(reached[id], "expression " + id + " is reached by nothing: " + problem.getExpressions(id));
+            }
+        }
+    }
+
+    /**
+     * {@code complement(Meeting.class)} on a stream of meetings and rooms adds the meetings it lacks, padded with a
+     * null room.
+     */
+    @Test
+    void complementPadsWithATypedNull() {
+        var problem = encode(MeetingPlan.smallWeek(), UnplacedConstraints.class);
+        var concat = problem.getStreamsList().stream().filter(s -> s.getKind() == StreamKind.CONCAT).findFirst()
+                .orElseThrow();
+        var padding = problem.getExpressions(concat.getFunctions(0));
+        assertEquals("const", padding.getOp());
+        assertEquals(-1, padding.getValue());
+        assertEquals(1, padding.getValueType().getRefClass()); // Room
+    }
+
+    /**
+     * Meetings without a room, found by complementing the meetings that have one.
+     */
+    public static class UnplacedConstraints implements ConstraintProvider {
+
+        @Override
+        public Constraint[] defineConstraints(ConstraintFactory factory) {
+            return new Constraint[] {
+                    factory.forEach(Meeting.class)
+                            .join(Room.class, Joiners.equal(Meeting::getRoom, room -> room))
+                            .complement(Meeting.class)
+                            .filter((meeting, room) -> room == null)
+                            .penalize(HardSoftScore.ONE_SOFT)
+                            .asConstraint("Meeting without a room")
+            };
+        }
     }
 
     /**
