@@ -65,6 +65,18 @@ class LiveSolveTest {
     }
 
     /**
+     * A configuration read from XML solves as a programmatic one does: the test file's provider, tuned by its
+     * custom property, and its termination (a best score limit of zero) reach the service.
+     */
+    @Test
+    void xmlConfigurationsSolve() {
+        var factory = SolverFactory.<MeetingPlan> createFromXmlResource("solverConfig.xml");
+        MeetingPlan solution = factory.buildSolver().solve(MeetingPlan.smallWeek());
+        assertEquals(0, solution.getScore().hardScore());
+        solution.getMeetings().forEach(meeting -> assertNotNull(meeting.getRoom()));
+    }
+
+    /**
      * @return a configuration that solves for two seconds with seed 0
      */
     private static SolverConfig config(Class<?> solution, Class<? extends ConstraintProvider> provider,
