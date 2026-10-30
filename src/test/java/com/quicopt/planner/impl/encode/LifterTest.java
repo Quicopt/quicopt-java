@@ -7,6 +7,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.quicopt.planner.testdomain.lifting.BranchConstraints;
+import com.quicopt.planner.testdomain.lifting.Comparisons;
 import com.quicopt.planner.testdomain.lifting.LoopConstraints;
 import com.quicopt.planner.testdomain.lifting.ProviderConstraints;
 import com.quicopt.planner.testdomain.meetings.MeetingConstraints;
@@ -83,5 +84,17 @@ class LifterTest {
     @Test
     void continueSkipsTheRestOfTheBody() {
         assertAgrees(FunctionCheck.run(RoutePlan.smallTown(), LoopConstraints.class, 20, 4));
+    }
+
+    /**
+     * {@code compareTo} translates to the sign of the comparison, so its result may be compared with 0, also
+     * through a conditional, but not used as a number.
+     */
+    @Test
+    void compareToResultsAreOnlyComparedWithZero() {
+        assertAgrees(FunctionCheck.run(MeetingPlan.smallWeek(), Comparisons.Signs.class, 20, 6));
+        var refusal = assertThrows(Refusal.class,
+                () -> FunctionCheck.encode(MeetingPlan.smallWeek(), Comparisons.Magnitudes.class));
+        assertTrue(refusal.getMessage().contains("compareTo"), refusal.getMessage());
     }
 }

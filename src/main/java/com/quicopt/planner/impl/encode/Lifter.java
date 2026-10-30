@@ -149,14 +149,67 @@ final class Lifter implements Opcodes {
 
     /**
      * @return a translated function's value, once it is checked to be something the wire can carry
-     * @throws Refusal for an object the lifter knows, which is neither a planning object nor a value
+     * @throws Refusal for an object the lifter knows, which is neither a planning object nor a value, and for a
+     *         {@code compareTo} result used as a number
      */
-    private static Val sendable(Val value) {
+    private Val sendable(Val value) {
         if (value.known() != null) {
             throw new Refusal("a function whose value is the object " + value.type()
                     + ", which is neither a planning object nor a value");
         }
+        requireSignsComparedWithZero(value);
         return value;
+    }
+
+    /**
+     * Checks every {@code cmp} a function uses. It computes the sign of a {@code compareTo}, -1, 0 or 1, while the
+     * JDK's {@code compareTo} of a LocalDate or a Duration returns other magnitudes. So a sign may only be compared
+     * with 0, or chosen by an {@code ifelse} whose value is in turn compared with 0. A {@code long} comparison,
+     * which javac compiles to a {@code cmp} and a jump, is a comparison with 0 already.
+     *
+     * @throws Refusal where a sign is used as a number
+     */
+    private void requireSignsComparedWithZero(Val value) {
+        var nodes = ir.nodes();
+        var reached = new java.util.BitSet();
+        var pending = new java.util.ArrayDeque<Integer>(List.of(value.node()));
+        while (!pending.isEmpty()) {
+            int id = pending.pop();
+            if (!reached.get(id)) {
+                reached.set(id);
+                nodes.get(id).args().forEach(pending::push);
+            }
+        }
+        var signs = new java.util.BitSet();
+        for (int id = reached.nextSetBit(0); id >= 0; id = reached.nextSetBit(id + 1)) { // operands come first
+            var node = nodes.get(id);
+            signs.set(id, node.op().equals("cmp")
+                    || node.op().equals("ifelse") && (signs.get(node.args().get(1)) || signs.get(node.args().get(2))));
+            for (int i = 0; i < node.args().size(); i++) {
+                if (signs.get(node.args().get(i)) && !takesSign(node, i)) {
+                    throw new Refusal("a compareTo result used as a number in " + node.op()
+                            + " (it may only be compared with 0, as in a.compareTo(b) < 0)");
+                }
+            }
+        }
+        if (signs.get(value.node())) {
+            throw new Refusal("a function whose value is a compareTo result (it may only be compared with 0)");
+        }
+    }
+
+    /**
+     * @return whether operand {@code i} of a node may be a sign: a branch of an {@code ifelse}, or an operand of a
+     *         comparison with the constant 0
+     */
+    private boolean takesSign(Ir.Node node, int i) {
+        if (node.op().equals("ifelse")) {
+            return i > 0;
+        }
+        if (!List.of("eq", "ne", "lt", "le", "gt", "ge").contains(node.op())) {
+            return false;
+        }
+        var other = ir.nodes().get(node.args().get(1 - i));
+        return other.op().equals("const") && other.value() == 0;
     }
 
     /**
