@@ -824,6 +824,9 @@ final class Lifter implements Opcodes {
             var field = findField(object.known().getClass(), insn.name);
             return constantOf(field.getType(), Members.read(field, object.known()));
         }
+        if (object.type().kind() == Kind.ENUM) {
+            return enumField(object, insn.name);
+        }
         var owner = object.type().kind() == Kind.REF ? object.type().refClass() : null;
         if (owner == null) {
             throw new Refusal("reads field " + insn.name + " of a " + object.type() + ", not of a planning object");
@@ -843,8 +846,43 @@ final class Lifter implements Opcodes {
             }
             return ir.add("shadow", List.of(object.node()), shadow.type(), owner.id, shadow.index(), 0);
         }
+        if (tables.isMapField(field)) {
+            var keys = tables.mapColumn(owner, field, ProblemTables.MapPart.KEYS);
+            var values = tables.mapColumn(owner, field, ProblemTables.MapPart.VALUES);
+            var keyList = ir.add("column", List.of(object.node()), keys.type(), owner.id, keys.index(), 0);
+            var valueList = ir.add("column", List.of(object.node()), values.type(), owner.id, values.index(), 0);
+            var type = Type.map(keys.type().element(), values.type().element());
+            var nullKeys = tables.nullKeysColumn(owner, field);
+            var rejectsNullKeys = nullKeys == null ? null
+                    : ir.add("column", List.of(object.node()), Type.BOOL, owner.id, nullKeys.index(), 0);
+            return new Val(keyList.node(), type, new Ir.MapLists(keyList, valueList, rejectsNullKeys));
+        }
         var column = tables.column(owner, field);
         return ir.add("column", List.of(object.node()), column.type(), owner.id, column.index(), 0);
+    }
+
+    /**
+     * A field of an enum constant that is known only when the function runs: the field's value for each constant,
+     * chosen by the constant. A null constant fails, as reading its field throws.
+     *
+     * @return the field's value
+     * @throws Refusal for a field whose type has no encoding
+     */
+    private Val enumField(Val constant, String name) {
+        var enumClass = constant.type().javaType();
+        var field = findField(enumClass, name);
+        var type = tables.typeOf(field.getGenericType());
+        if (type == null) {
+            throw new Refusal("the field " + enumClass.getSimpleName() + "." + name + " of type "
+                    + field.getGenericType().getTypeName() + ", which has no encoding");
+        }
+        var constants = enumClass.getEnumConstants();
+        var value = ir.add("fail", List.of(), type, 0, 0, 0);
+        for (int ordinal = constants.length - 1; ordinal >= 0; ordinal--) {
+            var isThis = ir.apply("eq", Type.BOOL, constant, ir.constant(constant.type(), ordinal));
+            value = ir.choose(isThis, constantOf(field.getType(), Members.read(field, constants[ordinal])), value);
+        }
+        return value;
     }
 
     /**

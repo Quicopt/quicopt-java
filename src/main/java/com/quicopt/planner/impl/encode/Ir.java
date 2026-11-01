@@ -28,6 +28,17 @@ final class Ir {
     }
 
     /**
+     * The two lists that stand for a map: its keys, and its values in the same order. A value of kind
+     * {@code MAP} carries them as its {@code known} object; its node is the keys' node.
+     *
+     * @param keys the keys, a list
+     * @param values the values, a list in the keys' order
+     * @param rejectsNullKeys whether the map throws on a null key, or {@code null} when no map of its field does
+     */
+    record MapLists(Val keys, Val values, Val rejectsNullKeys) {
+    }
+
+    /**
      * A value on the lifter's symbolic stack.
      *
      * @param node the id of the node that computes it, or -1 for an object the lifter knows
@@ -236,14 +247,14 @@ final class Ir {
      * @return whether a value is a {@code fail} node: the path that computes it throws
      */
     boolean isFail(Val v) {
-        return node(v).op().equals("fail");
+        return v.known() == null && node(v).op().equals("fail");
     }
 
     /**
      * @return whether a value is a constant node
      */
     boolean isConstant(Val v) {
-        return node(v).op().equals("const");
+        return v.known() == null && node(v).op().equals("const");
     }
 
     /**

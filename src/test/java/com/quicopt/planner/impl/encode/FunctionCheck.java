@@ -187,7 +187,8 @@ final class FunctionCheck {
     }
 
     /**
-     * Gives every genuine variable a random value, and every shadow variable of a reference or number type.
+     * Gives every genuine variable a random value of its range, and every shadow variable of a reference or number
+     * type.
      */
     static void randomize(ProblemTables tables, Random rng) {
         for (ProblemTables.ClassInfo info : tables.classes()) {
@@ -195,10 +196,11 @@ final class FunctionCheck {
                 if (variable.list()) {
                     dealLists(info, variable, rng);
                 } else {
-                    var values = variable.valueClass().rows();
-                    for (Object row : info.rows()) {
-                        Members.write(variable.field(), row,
-                                rng.nextInt(8) == 0 ? null : values.get(rng.nextInt(values.size())));
+                    var range = ValueRanges.of(tables, info, variable);
+                    for (int r = 0; r < info.rows().size(); r++) {
+                        var values = range.shared() != null ? range.shared() : range.perEntity().get(r);
+                        Members.write(variable.field(), info.rows().get(r),
+                                rng.nextInt(8) == 0 || values.isEmpty() ? null : values.get(rng.nextInt(values.size())));
                     }
                 }
             }

@@ -90,6 +90,7 @@ final class WireEvaluator {
             case "not" -> bool(!truth(eval(e.getArgs(0), tuple)));
             case "contains" -> bool(list(eval(e.getArgs(0), tuple)).contains(eval(e.getArgs(1), tuple)));
             case "size" -> (long) list(eval(e.getArgs(0), tuple)).size();
+            case "index_of" -> (long) list(eval(e.getArgs(0), tuple)).indexOf(eval(e.getArgs(1), tuple));
             case "get" -> element(list(eval(e.getArgs(0), tuple)), num(eval(e.getArgs(1), tuple)));
             default -> e.getArgsCount() == 1 ? unary(e, tuple) : binary(e, tuple);
         };

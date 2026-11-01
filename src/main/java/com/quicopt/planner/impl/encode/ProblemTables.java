@@ -196,8 +196,15 @@ public final class ProblemTables {
      * @param field the field, or {@code null} for the rank and test columns
      * @param type how its values are encoded
      * @param test the test of a yes/no column, or {@code null}
+     * @param part for a map field, which of its two columns this is (the field then holds a map, and the column a
+     *        list per row); else {@code null}
      */
-    record ColumnInfo(int index, Field field, Type type, RowTest test) {
+    record ColumnInfo(int index, Field field, Type type, RowTest test, MapPart part) {
+    }
+
+    /** Which of a map field's two columns a column is: the map's keys, or its values in the same order. */
+    enum MapPart {
+        KEYS, VALUES
     }
 
     /**
@@ -477,6 +484,13 @@ public final class ProblemTables {
             var element = typeOf(parameterized.getActualTypeArguments()[0]);
             return element == null ? null : Type.list(element);
         }
+        if (generic instanceof ParameterizedType parameterized
+                && Map.class.isAssignableFrom((Class<?>) parameterized.getRawType())) {
+            var key = typeOf(parameterized.getActualTypeArguments()[0]);
+            var value = typeOf(parameterized.getActualTypeArguments()[1]);
+            return key == null || value == null || !isListElement(key) || !isListElement(value) ? null
+                    : Type.map(key, value);
+        }
         if (!(generic instanceof Class<?> type)) {
             return null;
         }
@@ -486,6 +500,13 @@ public final class ProblemTables {
         }
         var info = classOf(type);
         return info == null ? null : Type.ref(info);
+    }
+
+    /**
+     * @return whether values of a type can be the elements of a list on the wire
+     */
+    private static boolean isListElement(Type type) {
+        return type.isNumberEncoded() || type.kind() == Type.Kind.REF || type.kind() == Type.Kind.BOOL;
     }
 
     /**
@@ -605,9 +626,62 @@ public final class ProblemTables {
             throw new Refusal("the field " + owner.type.getSimpleName() + "." + field.getName() + " of type "
                     + field.getGenericType().getTypeName() + ", which has no encoding");
         }
-        var column = new ColumnInfo(owner.columns.size(), field, type, null);
+        if (type.kind() == Type.Kind.MAP) {
+            throw new Refusal("the map field " + owner.type.getSimpleName() + "." + field.getName()
+                    + " used other than through get, getOrDefault, containsKey, containsValue, size, isEmpty, keySet"
+                    + " or values");
+        }
+        var column = new ColumnInfo(owner.columns.size(), field, type, null, null);
         owner.columns.add(column);
         return column;
+    }
+
+    /**
+     * @return the column of one part of a map field: its keys, or its values in the keys' order, as a list per
+     *         row; registered on first use
+     */
+    ColumnInfo mapColumn(ClassInfo owner, Field field, MapPart part) {
+        for (ColumnInfo column : owner.columns) {
+            if (field.equals(column.field()) && column.part() == part) {
+                return column;
+            }
+        }
+        var type = typeOf(field.getGenericType());
+        var listType = Type.list(part == MapPart.KEYS ? type.element() : type.value());
+        var column = new ColumnInfo(owner.columns.size(), field, listType, null, part);
+        owner.columns.add(column);
+        return column;
+    }
+
+    /**
+     * The column that says, for each row, whether its map throws on a null key, as {@code Map.of} maps do and
+     * {@code HashMap}s do not; registered on first use.
+     *
+     * @return the column, or {@code null} when no row's map throws
+     */
+    ColumnInfo nullKeysColumn(ClassInfo owner, Field field) {
+        var test = new RowTest(field.getName() + " rejects null keys", row -> rejectsNullKeys(Members.read(field, row)));
+        return owner.rows.stream().anyMatch(test.holds()) ? testColumn(owner, test) : null;
+    }
+
+    /**
+     * @return whether a map throws on a null key, which it tells by being asked
+     */
+    private static boolean rejectsNullKeys(Object map) {
+        try {
+            ((Map<?, ?>) map).containsKey(null);
+            return false;
+        } catch (NullPointerException rejected) {
+            return true;
+        }
+    }
+
+    /**
+     * @return whether a field holds a map that the wire can carry
+     */
+    boolean isMapField(Field field) {
+        var type = typeOf(field.getGenericType());
+        return type != null && type.kind() == Type.Kind.MAP;
     }
 
     /**
@@ -645,7 +719,7 @@ public final class ProblemTables {
                 return column;
             }
         }
-        var column = new ColumnInfo(owner.columns.size(), null, Type.BOOL, test);
+        var column = new ColumnInfo(owner.columns.size(), null, Type.BOOL, test, null);
         owner.columns.add(column);
         return column;
     }
@@ -672,7 +746,7 @@ public final class ProblemTables {
                 return column;
             }
         }
-        var column = new ColumnInfo(owner.columns.size(), null, Type.LONG, null);
+        var column = new ColumnInfo(owner.columns.size(), null, Type.LONG, null, null);
         owner.columns.add(column);
         return column;
     }
@@ -771,7 +845,7 @@ public final class ProblemTables {
         var field = column.field();
         try {
             if (column.type().kind() == Type.Kind.LIST) {
-                return owner.rows.stream().flatMap(row -> ((Collection<?>) Members.read(field, row)).stream())
+                return owner.rows.stream().flatMap(row -> listOf(column, row).stream())
                         .mapToLong(element -> encodeBoxed(column.type().element(), Long.class, element)).toArray();
             }
             return owner.rows.stream()
@@ -810,10 +884,30 @@ public final class ProblemTables {
         var offsets = new int[owner.rows.size()];
         int end = 0;
         for (int row = 0; row < offsets.length; row++) {
-            end += ((Collection<?>) Members.read(column.field(), owner.rows.get(row))).size();
+            end += listOf(column, owner.rows.get(row)).size();
             offsets[row] = end;
         }
         return offsets;
+    }
+
+    /**
+     * @return the list a list column holds at a row: the field's collection, or a map field's keys or values
+     * @throws Refusal for a null map
+     */
+    private static Collection<?> listOf(ColumnInfo column, Object row) {
+        var value = Members.read(column.field(), row);
+        if (column.part() == null) {
+            return (Collection<?>) value;
+        }
+        if (value == null) {
+            throw new Refusal("a null map");
+        }
+        if (value instanceof java.util.IdentityHashMap<?, ?>
+                || value instanceof java.util.SortedMap<?, ?> sorted && sorted.comparator() != null) {
+            throw new Refusal("a map that compares its keys other than by equals: " + value.getClass().getName());
+        }
+        var map = (Map<?, ?>) value;
+        return column.part() == MapPart.KEYS ? map.keySet() : map.values();
     }
 
     /**

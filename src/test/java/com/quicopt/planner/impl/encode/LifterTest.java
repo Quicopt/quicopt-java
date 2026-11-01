@@ -24,6 +24,8 @@ import com.quicopt.planner.testdomain.lifting.VisitorPlan;
 import com.quicopt.planner.testdomain.meetings.Meeting;
 import com.quicopt.planner.testdomain.meetings.MeetingConstraints;
 import com.quicopt.planner.testdomain.meetings.MeetingPlan;
+import com.quicopt.planner.testdomain.shifts.BonusConstraints;
+import com.quicopt.planner.testdomain.shifts.ShiftPlan;
 import com.quicopt.planner.testdomain.meetings.Room;
 import com.quicopt.planner.testdomain.routes.RouteConstraints;
 import com.quicopt.planner.testdomain.routes.RoutePlan;
@@ -155,5 +157,13 @@ class LifterTest {
         var refusal = assertThrows(Refusal.class,
                 () -> FunctionCheck.encode(MeetingPlan.smallWeek(), Comparisons.Magnitudes.class));
         assertTrue(refusal.getMessage().contains("compareTo"), refusal.getMessage());
+    }
+
+    /**
+     * Map lookups (get, getOrDefault, containsKey, isEmpty, size) and an enum constant's field agree with Java.
+     */
+    @Test
+    void mapLookupsAndEnumFieldsAgree() {
+        assertAgrees(FunctionCheck.run(ShiftPlan.twoShifts(), BonusConstraints.class, 40, 6));
     }
 }

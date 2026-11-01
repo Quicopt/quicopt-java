@@ -50,6 +50,8 @@ final class Intrinsics {
             case "java/time/temporal/ChronoUnit" -> name.equals("between") && args.size() == 3
                     ? unitsBetween(args.get(0), args.get(1), args.get(2)) : null;
             case "java/util/Set", "java/util/List", "java/util/Collection" -> collection(name, args);
+            case "java/util/Map", "java/util/HashMap", "java/util/LinkedHashMap", "java/util/TreeMap",
+                    "java/util/SortedMap", "java/util/NavigableMap", "java/util/EnumMap" -> map(name, args);
             case "java/lang/Integer", "java/lang/Long", "java/lang/Boolean" -> boxing(name, args);
             case "java/lang/Math" -> math(name, args);
             case "java/lang/Object", "java/lang/String", "java/lang/Enum", "java/util/Objects" ->
@@ -191,6 +193,63 @@ final class Intrinsics {
             case "get" -> ir.apply("get", requireList(a.get(0)).type().element(), a.get(0), a.get(1));
             default -> null;
         };
+    }
+
+    /**
+     * {@code java.util.Map} lookups, on the map's two lists: a key's position in the keys finds its value at the
+     * same position in the values. Keys are compared as {@link #equality} compares them. A null key fails where the
+     * row's map throws on one.
+     *
+     * @return the translation, or {@code null} for another method or a receiver that is not a map field's map
+     */
+    private Val map(String name, List<Val> a) {
+        if (a.get(0).type().kind() != Kind.MAP) {
+            return null;
+        }
+        var lists = (Ir.MapLists) a.get(0).known();
+        var keyType = a.get(0).type().element();
+        var valueType = a.get(0).type().value();
+        return switch (name) {
+            case "get", "getOrDefault" -> {
+                var key = key(keyType, a.get(1));
+                var position = ir.apply("index_of", Type.INT, lists.keys(), key);
+                var found = ir.apply("ge", Type.BOOL, position, ir.constant(Type.INT, 0));
+                var value = ir.apply("get", valueType, lists.values(), position);
+                var otherwise = name.equals("get") ? ir.nullOf(valueType) : a.get(2);
+                yield failingOnNullKey(lists, key, ir.choose(found, value, otherwise));
+            }
+            case "containsKey" -> {
+                var key = key(keyType, a.get(1));
+                yield failingOnNullKey(lists, key, ir.apply("contains", Type.BOOL, lists.keys(), key));
+            }
+            case "size", "isEmpty" -> collection(name, List.of(lists.keys()));
+            case "keySet" -> lists.keys();
+            case "values" -> lists.values();
+            default -> null;
+        };
+    }
+
+    /**
+     * @return a lookup that fails where the map throws on a null key and the key is null
+     */
+    private Val failingOnNullKey(Ir.MapLists lists, Val key, Val lookup) {
+        if (lists.rejectsNullKeys() == null || key.type().kind() == Kind.BOOL
+                || ir.isConstant(key) && ir.constantValue(key) != (key.type().kind() == Kind.REF ? -1 : Type.NULL_LONG)) {
+            return lookup;
+        }
+        var nullKey = ir.apply("eq", Type.BOOL, key, ir.nullOf(key.type()));
+        var fails = ir.and(nullKey, lists.rejectsNullKeys());
+        return ir.choose(fails, ir.add("fail", List.of(), lookup.type(), 0, 0, 0), lookup);
+    }
+
+    /**
+     * @return a key looked up in a map, the null literal typed as a key
+     * @throws Refusal when equal keys are not equal encodings
+     */
+    private Val key(Type keyType, Val key) {
+        var sought = key.type().kind() == Kind.NULL ? ir.nullOf(keyType) : key;
+        equality(new Val(sought.node(), keyType), sought);
+        return sought;
     }
 
     /**

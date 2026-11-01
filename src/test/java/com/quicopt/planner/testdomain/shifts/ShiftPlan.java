@@ -3,7 +3,9 @@
 package com.quicopt.planner.testdomain.shifts;
 
 import java.time.LocalDate;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 
 import com.quicopt.planner.api.domain.solution.PlanningEntityCollectionProperty;
 import com.quicopt.planner.api.domain.solution.PlanningScore;
@@ -36,10 +38,15 @@ public class ShiftPlan {
     }
 
     /**
-     * @return two shifts: one allows two hours of overtime, the other none
+     * @return two shifts: a night shift that allows two hours of overtime and earns a bonus on Wednesday and
+     *         Friday, and a day shift that allows no overtime and earns no bonus
      */
     public static ShiftPlan twoShifts() {
-        return new ShiftPlan(List.of(new Shift(1, 2), new Shift(2, 0)));
+        var monday = LocalDate.of(2026, 11, 2);
+        var bonuses = new LinkedHashMap<LocalDate, Integer>();
+        bonuses.put(monday.plusDays(2), 5);
+        bonuses.put(monday.plusDays(4), 3);
+        return new ShiftPlan(List.of(new Shift(1, 2, ShiftKind.NIGHT, bonuses), new Shift(2, 0, ShiftKind.DAY, Map.of())));
     }
 
     /**

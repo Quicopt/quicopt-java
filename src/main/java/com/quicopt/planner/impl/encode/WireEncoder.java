@@ -436,7 +436,10 @@ public final class WireEncoder {
      */
     private Column column(ClassInfo info, ProblemTables.ColumnInfo column) {
         var name = column.test() != null ? column.test().name()
-                : column.field() == null ? "@PlanningId rank" : column.field().getName();
+                : column.field() == null ? "@PlanningId rank"
+                : column.part() == ProblemTables.MapPart.KEYS ? column.field().getName() + " keys"
+                : column.part() == ProblemTables.MapPart.VALUES ? column.field().getName() + " values"
+                : column.field().getName();
         var wire = Column.newBuilder().setName(name).setValueType(valueType(column.type()));
         var values = tables.columnValues(info, column);
         if (column.type().kind() != Type.Kind.LIST) {
@@ -625,7 +628,7 @@ public final class WireEncoder {
             case REF -> ValueKind.REF;
             case LIST -> ValueKind.LIST;
             case LOAD_BALANCE -> ValueKind.LOAD_BALANCE;
-            case ITERATOR, NULL, OBJECT -> throw new Refusal("a value of kind " + type.kind() + " on the wire");
+            case ITERATOR, NULL, OBJECT, MAP -> throw new Refusal("a value of kind " + type.kind() + " on the wire");
         });
         if (type.refClass() != null) {
             wire.setRefClass(type.refClass().id);

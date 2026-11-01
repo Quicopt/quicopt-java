@@ -18,6 +18,7 @@ import java.util.Collection;
  * <li>{@code ENUM} the ordinal, {@code STRING} an interned id, {@code REF} a row of {@code refClass};</li>
  * <li>{@code LIST} a collection of {@code element}s, {@code LOAD_BALANCE} the result of the {@code loadBalance}
  * collector;</li>
+ * <li>{@code MAP} a map, which reaches the wire as two lists, its keys and its values in the same order;</li>
  * <li>{@code ITERATOR} an iterator over a list, which exists only while a loop is folded and never reaches the
  * wire; {@code NULL} the type of a {@code null} literal before its context gives it one; {@code OBJECT} an object
  * the lifter knows while it translates, such as the constraint provider, which never reaches the wire either.</li>
@@ -29,13 +30,14 @@ import java.util.Collection;
  * @param refClass the table whose rows a {@code REF} names
  * @param element the element type of a {@code LIST} or {@code ITERATOR}
  * @param javaType the Java type the value has in the model
+ * @param value the type of a {@code MAP}'s values, whose {@code element} is the type of its keys
  */
-public record Type(Kind kind, ProblemTables.ClassInfo refClass, Type element, Class<?> javaType) {
+public record Type(Kind kind, ProblemTables.ClassInfo refClass, Type element, Class<?> javaType, Type value) {
 
     /** The kinds of value. */
     public enum Kind {
         BOOL, INT, LONG, DOUBLE, BIG_DECIMAL, STRING, ENUM, TIME, DATE, DATETIME, DURATION, REF, LIST,
-        LOAD_BALANCE, ITERATOR, NULL, OBJECT
+        LOAD_BALANCE, ITERATOR, NULL, OBJECT, MAP
     }
 
     /** The encoding of a null time, date, duration or number. */
@@ -58,42 +60,49 @@ public record Type(Kind kind, ProblemTables.ClassInfo refClass, Type element, Cl
      * @return a scalar type with no class or element
      */
     static Type of(Kind kind, Class<?> javaType) {
-        return new Type(kind, null, null, javaType);
+        return new Type(kind, null, null, javaType, null);
     }
 
     /**
      * @return the type of the rows of a table
      */
     static Type ref(ProblemTables.ClassInfo info) {
-        return new Type(Kind.REF, info, null, info.type);
+        return new Type(Kind.REF, info, null, info.type, null);
     }
 
     /**
      * @return the type of the constants of an enum
      */
     static Type enumOf(Class<?> enumClass) {
-        return new Type(Kind.ENUM, null, null, enumClass);
+        return new Type(Kind.ENUM, null, null, enumClass, null);
     }
 
     /**
      * @return the type of a collection of elements
      */
     static Type list(Type element) {
-        return new Type(Kind.LIST, null, element, Collection.class);
+        return new Type(Kind.LIST, null, element, Collection.class, null);
+    }
+
+    /**
+     * @return the type of a map from keys to values
+     */
+    static Type map(Type key, Type value) {
+        return new Type(Kind.MAP, null, key, java.util.Map.class, value);
     }
 
     /**
      * @return the type of an iterator over a list of elements
      */
     static Type iterator(Type element) {
-        return new Type(Kind.ITERATOR, null, element, java.util.Iterator.class);
+        return new Type(Kind.ITERATOR, null, element, java.util.Iterator.class, null);
     }
 
     /**
      * @return the type of an object of a class that the lifter knows while it translates
      */
     static Type object(Class<?> type) {
-        return new Type(Kind.OBJECT, null, null, type);
+        return new Type(Kind.OBJECT, null, null, type, null);
     }
 
     /**
@@ -114,6 +123,7 @@ public record Type(Kind kind, ProblemTables.ClassInfo refClass, Type element, Cl
         return switch (kind) {
             case REF -> refClass.type.getSimpleName();
             case LIST -> "List<" + element + ">";
+            case MAP -> "Map<" + element + ", " + value + ">";
             case ENUM, OBJECT -> javaType.getSimpleName();
             default -> kind.toString();
         };
