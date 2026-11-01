@@ -521,6 +521,10 @@ message SolveStats {
   int64 move_evaluations = 5;
   int64 steps = 6;
   Score construction_score = 7;
+  double time_cap_seconds = 8;      // set: the server ended the search after
+                                    // this many seconds at most, sooner than
+                                    // the termination allowed (or it had no
+                                    // time limit)
 }
 
 enum ErrorKind {
@@ -572,7 +576,8 @@ enum JobState {
   JOB_FINISHED = 2;                 // the job ended; its last event is final
 }
 
-// One event of a job, numbered from 1 in the order they happened.
+// One event of a job. Events are numbered from 1 in the order they happened;
+// the numbers increase but may skip.
 message JobEvent {
   uint64 sequence = 1;
   Solution best_solution = 2;       // a new best solution; when several came

@@ -75,6 +75,7 @@ final class DefaultSolver<Solution_> implements Solver<Solution_> {
             if (result.hasError()) {
                 throw PlannerService.failure(result.getError());
             }
+            PlannerService.warnIfCapped(result.getStats());
             var solution = PlanningCloner.clone(problem);
             SolutionWriter.write(solution, result.getSolution(), scoreClass, tables);
             return solution;

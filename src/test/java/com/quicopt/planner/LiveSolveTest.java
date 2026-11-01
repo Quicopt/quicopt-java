@@ -228,9 +228,12 @@ class LiveSolveTest {
         var bytes = EncoderTest.encode(solution, provider).toByteArray();
         var base = System.getProperty("quicopt.baseUrl", "http://127.0.0.1:8199");
         var request = HttpRequest.newBuilder(URI.create(base + "/v1/planner/score"))
-                .header("Content-Type", "application/x-protobuf").POST(HttpRequest.BodyPublishers.ofByteArray(bytes))
-                .build();
-        var answer = HttpClient.newHttpClient().send(request, HttpResponse.BodyHandlers.ofByteArray());
+                .header("Content-Type", "application/x-protobuf").POST(HttpRequest.BodyPublishers.ofByteArray(bytes));
+        var key = System.getProperty("quicopt.apiKey", System.getenv("QUICOPT_API_KEY"));
+        if (key != null && !key.isBlank()) {
+            request.header("Authorization", "Bearer " + key.strip());
+        }
+        var answer = HttpClient.newHttpClient().send(request.build(), HttpResponse.BodyHandlers.ofByteArray());
         var result = ScoreResult.parseFrom(answer.body());
         assertFalse(result.hasError(), () -> result.getError().toString());
         var scoreClass = solution.getClass().getMethod("getScore").getReturnType();

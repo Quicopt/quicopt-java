@@ -150,6 +150,7 @@ final class DefaultSolverJob<Solution_> implements SolverJob<Solution_> {
                         throw PlannerService.failure(result.getError());
                     }
                     stats = result.getStats();
+                    PlannerService.warnIfCapped(stats);
                     var solution = written(problem, result.getSolution(), scoreClass, tables);
                     listeners.finalBestSolutionConsumer().accept(new Events.Final<>(solution));
                     finalBestSolution.complete(solution);
