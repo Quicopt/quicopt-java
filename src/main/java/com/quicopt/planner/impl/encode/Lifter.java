@@ -148,6 +148,15 @@ final class Lifter implements Opcodes {
     }
 
     /**
+     * @return a predicate on a tuple of one object of {@code owner}: whether the object is an instance of a subclass
+     */
+    Val isInstance(ProblemTables.ClassInfo owner, Class<?> subclass) {
+        var object = ir.add("arg", List.of(), Type.ref(owner), owner.id, 0, 0);
+        var column = tables.subclassColumn(owner, subclass);
+        return ir.add("column", List.of(object.node()), column.type(), owner.id, column.index(), 0);
+    }
+
+    /**
      * @return a predicate on a tuple of one object of {@code owner}: whether the object's field holds a value
      */
     Val isSet(ProblemTables.ClassInfo owner, java.lang.reflect.Field field) {

@@ -26,7 +26,9 @@ import java.util.stream.IntStream;
 
 import com.quicopt.planner.api.domain.common.PlanningId;
 import com.quicopt.planner.api.domain.solution.PlanningEntityCollectionProperty;
+import com.quicopt.planner.api.domain.solution.PlanningEntityProperty;
 import com.quicopt.planner.api.domain.solution.ProblemFactCollectionProperty;
+import com.quicopt.planner.api.domain.solution.ProblemFactProperty;
 import com.quicopt.planner.api.domain.variable.InverseRelationShadowVariable;
 
 /**
@@ -49,19 +51,23 @@ public final class ProblemTables {
         final List<ShadowInfo> shadows = new ArrayList<>();
         final List<ColumnInfo> columns = new ArrayList<>();
         final List<Pin> pins = new ArrayList<>();
+        private final boolean copiesByEquals;
         private Map<Object, Integer> rowOfPlanningId;
+        private Map<Object, Integer> rowOfEqual;
 
         /**
          * @param id the class's index in the wire's class table
          * @param type the Java class
          * @param entity whether it is a planning entity class
          * @param rows its objects, in table order
+         * @param copiesByEquals whether an object of a class without a planning id stands for the row it equals
          */
-        ClassInfo(int id, Class<?> type, boolean entity, List<?> rows) {
+        ClassInfo(int id, Class<?> type, boolean entity, List<?> rows, boolean copiesByEquals) {
             this.id = id;
             this.type = type;
             this.entity = entity;
             this.rows = rows;
+            this.copiesByEquals = copiesByEquals;
             for (int row = 0; row < rows.size(); row++) {
                 rowOf.put(rows.get(row), row);
             }
@@ -111,15 +117,21 @@ public final class ProblemTables {
 
         /**
          * The row that an object stands for without being it, as a copy deserialized apart from the row does: the
-         * row with the same {@code @PlanningId}, provided the object also equals it.
+         * row with the same {@code @PlanningId}, provided the object also equals it. Among objects given to a
+         * constraint test, a class without a planning id has its copies stand for the first row they equal: tests
+         * build the same fact again for each object that refers to it, and the solver API's joins match such
+         * copies by {@code equals}.
          *
-         * @return the row, or {@code null} when the class has no planning id or no row qualifies
+         * @return the row, or {@code null} when no row qualifies
          * @throws Refusal when two rows share a planning id
          */
         Integer rowOfCopy(Object value) {
-            var idField = planningIdField(type);
-            if (idField == null || !type.isInstance(value)) {
+            if (!type.isInstance(value)) {
                 return null;
+            }
+            var idField = planningIdField(type);
+            if (idField == null) {
+                return copiesByEquals ? rowOfEqual(value) : null;
             }
             if (rowOfPlanningId == null) {
                 rowOfPlanningId = new HashMap<>();
@@ -132,6 +144,19 @@ public final class ProblemTables {
             }
             var row = rowOfPlanningId.get(Members.read(idField, value));
             return row != null && rows.get(row).equals(value) ? row : null;
+        }
+
+        /**
+         * @return the first row that equals the object by its class's {@code equals}, or {@code null}
+         */
+        private Integer rowOfEqual(Object value) {
+            if (rowOfEqual == null) {
+                rowOfEqual = new HashMap<>();
+                for (int row = 0; row < rows.size(); row++) {
+                    rowOfEqual.putIfAbsent(rows.get(row), row);
+                }
+            }
+            return rowOfEqual.get(value);
         }
     }
 
@@ -160,14 +185,16 @@ public final class ProblemTables {
     }
 
     /**
-     * A fact field that some translated function reads. A column without a field is the class's planning-id rank,
-     * which {@code forEachUniquePair} compares.
+     * A fact field that some translated function reads. A column without a field is either the class's planning-id
+     * rank, which {@code forEachUniquePair} compares, or whether each row is an instance of a subclass, which a
+     * stream over that subclass selects by.
      *
      * @param index its index among its class's columns
-     * @param field the field, or {@code null} for the rank column
+     * @param field the field, or {@code null} for the rank and subclass columns
      * @param type how its values are encoded
+     * @param subclass the subclass a yes/no column tests, or {@code null}
      */
-    record ColumnInfo(int index, Field field, Type type) {
+    record ColumnInfo(int index, Field field, Type type, Class<?> subclass) {
     }
 
     /**
@@ -197,6 +224,8 @@ public final class ProblemTables {
     final Class<?> solutionClass;
     /** Whether shadow variables are read as the objects hold them, like other fields, instead of being computed. */
     final boolean shadowsAsData;
+    /** Whether the objects were given loose, so that copies of a row stand for it by {@code equals}. */
+    private final boolean loose;
     final List<ClassInfo> classes = new ArrayList<>();
     final List<TableInfo> tables = new ArrayList<>();
     private final Map<Class<?>, ClassInfo> byType = new HashMap<>();
@@ -211,7 +240,7 @@ public final class ProblemTables {
      * @param solution an instance of the class with the {@code PlanningSolution} annotation
      */
     public ProblemTables(Object solution) {
-        this(solution.getClass(), declared(solution), false);
+        this(solution.getClass(), declared(solution), false, false);
     }
 
     /**
@@ -222,7 +251,7 @@ public final class ProblemTables {
      * @return the tables
      */
     public static ProblemTables asItStands(Object solution) {
-        return new ProblemTables(solution.getClass(), declared(solution), true);
+        return new ProblemTables(solution.getClass(), declared(solution), true, false);
     }
 
     /**
@@ -235,15 +264,16 @@ public final class ProblemTables {
      * @return the tables
      */
     public static ProblemTables ofObjects(Class<?> solutionClass, List<?> objects) {
-        return new ProblemTables(solutionClass, declared(solutionClass, objects), true);
+        return new ProblemTables(solutionClass, declared(solutionClass, objects), true, true);
     }
 
     /**
      * Reads the declared collections into tables, then the entity classes' variables.
      */
-    private ProblemTables(Class<?> solutionClass, List<Declared> declared, boolean shadowsAsData) {
+    private ProblemTables(Class<?> solutionClass, List<Declared> declared, boolean shadowsAsData, boolean loose) {
         this.solutionClass = solutionClass;
         this.shadowsAsData = shadowsAsData;
+        this.loose = loose;
         for (Declared collection : declared) {
             addClass(collection.type, collection.entity, collection.rows);
         }
@@ -258,44 +288,79 @@ public final class ProblemTables {
      * @return the solution's annotated collections, in field order
      */
     private static List<Declared> declared(Object solution) {
-        return collectionFields(solution.getClass()).stream().map(field -> new Declared(
-                Members.elementClass(field.getGenericType()),
-                field.isAnnotationPresent(PlanningEntityCollectionProperty.class), rowsOf(field, solution))).toList();
+        return collectionFields(solution.getClass()).stream().map(field -> new Declared(tableClass(field),
+                isEntityField(field), rowsOf(field, solution))).toList();
     }
 
     /**
      * The solution class's collections filled with loose objects: each object goes to the first collection, in
      * field order, whose element class it is an instance of; the objects that a collected object's fields hold
-     * follow, after all given objects. Objects of no collection's class are left out.
+     * follow, after all given objects, unless they equal an object already in their collection, for which they
+     * stand ({@link ClassInfo#rowOfCopy}). Objects of no collection's class are left out.
      *
      * @return the collections, in field order
      */
     private static List<Declared> declared(Class<?> solutionClass, List<?> objects) {
         var fields = collectionFields(solutionClass);
-        var types = fields.stream().<Class<?>> map(field -> Members.elementClass(field.getGenericType())).toList();
+        var types = fields.stream().<Class<?>> map(ProblemTables::tableClass).toList();
         var rows = types.stream().map(type -> new ArrayList<Object>()).toList();
         var placed = Collections.newSetFromMap(new IdentityHashMap<Object, Boolean>());
+        var given = Collections.newSetFromMap(new IdentityHashMap<Object, Boolean>());
+        given.addAll(objects);
+        var placedByEquals = types.stream().map(type -> new HashSet<Object>()).toList();
         var pending = new java.util.ArrayDeque<Object>(objects);
         while (!pending.isEmpty()) {
             var object = pending.poll();
             int c = IntStream.range(0, types.size()).filter(i -> types.get(i).isInstance(object)).findFirst().orElse(-1);
-            if (c >= 0 && placed.add(object)) {
-                rows.get(c).add(object);
-                pending.addAll(referencedObjects(object));
+            if (c < 0 || placed.contains(object) || !given.contains(object) && placedByEquals.get(c).contains(object)) {
+                continue; // not a collection's object, placed already, or a copy that stands for a placed object
             }
+            placed.add(object);
+            placedByEquals.get(c).add(object);
+            rows.get(c).add(object);
+            pending.addAll(referencedObjects(object));
         }
         return IntStream.range(0, types.size()).mapToObj(i -> new Declared(types.get(i),
-                fields.get(i).isAnnotationPresent(PlanningEntityCollectionProperty.class), rows.get(i))).toList();
+                isEntityField(fields.get(i)), rows.get(i))).toList();
     }
 
     /**
-     * @return the solution class's fields annotated as a collection of entities or of facts, in field order
+     * The solution class's fields that make tables: those annotated as a collection of entities or of facts, and
+     * those annotated as a single entity or fact of a class that is not a value type, which make a table of one row.
+     *
+     * @return the fields, in field order
      */
     private static List<Field> collectionFields(Class<?> solutionClass) {
         return Members.allFields(solutionClass).stream()
                 .filter(field -> field.isAnnotationPresent(PlanningEntityCollectionProperty.class)
-                        || field.isAnnotationPresent(ProblemFactCollectionProperty.class))
+                        || field.isAnnotationPresent(ProblemFactCollectionProperty.class)
+                        || isSingleProperty(field) && !isValueClass(field.getType()) && !field.getType().isEnum()
+                                && !field.getType().isPrimitive())
                 .toList();
+    }
+
+    /**
+     * @return whether a field of the solution class holds a single entity or fact
+     */
+    private static boolean isSingleProperty(Field field) {
+        return field.isAnnotationPresent(ProblemFactProperty.class)
+                || field.isAnnotationPresent(PlanningEntityProperty.class);
+    }
+
+    /**
+     * @return whether a field of the solution class holds entities, a collection or a single one
+     */
+    private static boolean isEntityField(Field field) {
+        return field.isAnnotationPresent(PlanningEntityCollectionProperty.class)
+                || field.isAnnotationPresent(PlanningEntityProperty.class);
+    }
+
+    /**
+     * @return the class of the table a field of the solution class fills: a collection's element class, or a single
+     *         property's own class
+     */
+    private static Class<?> tableClass(Field field) {
+        return isSingleProperty(field) ? field.getType() : Members.elementClass(field.getGenericType());
     }
 
     /**
@@ -465,9 +530,37 @@ public final class ProblemTables {
             throw new Refusal("the field " + owner.type.getSimpleName() + "." + field.getName() + " of type "
                     + field.getGenericType().getTypeName() + ", which has no encoding");
         }
-        var column = new ColumnInfo(owner.columns.size(), field, type);
+        var column = new ColumnInfo(owner.columns.size(), field, type, null);
         owner.columns.add(column);
         return column;
+    }
+
+    /**
+     * @return the column that says whether each row of a class is an instance of one of its subclasses, registered
+     *         on first use
+     */
+    ColumnInfo subclassColumn(ClassInfo owner, Class<?> subclass) {
+        for (ColumnInfo column : owner.columns) {
+            if (subclass.equals(column.subclass())) {
+                return column;
+            }
+        }
+        var column = new ColumnInfo(owner.columns.size(), null, Type.BOOL, subclass);
+        owner.columns.add(column);
+        return column;
+    }
+
+    /**
+     * @return the table of the nearest superclass of a class that has no table of its own, or {@code null}
+     */
+    ClassInfo superclassTable(Class<?> type) {
+        for (Class<?> c = type.getSuperclass(); c != null && c != Object.class; c = c.getSuperclass()) {
+            var info = byType.get(c);
+            if (info != null) {
+                return info;
+            }
+        }
+        return null;
     }
 
     /**
@@ -475,11 +568,11 @@ public final class ProblemTables {
      */
     ColumnInfo rankColumn(ClassInfo owner) {
         for (ColumnInfo column : owner.columns) {
-            if (column.field() == null) {
+            if (column.field() == null && column.subclass() == null) {
                 return column;
             }
         }
-        var column = new ColumnInfo(owner.columns.size(), null, Type.LONG);
+        var column = new ColumnInfo(owner.columns.size(), null, Type.LONG, null);
         owner.columns.add(column);
         return column;
     }
@@ -550,6 +643,9 @@ public final class ProblemTables {
      * @throws Refusal naming the field for a value the wire cannot carry
      */
     long[] columnValues(ClassInfo owner, ColumnInfo column) {
+        if (column.subclass() != null) {
+            return owner.rows.stream().mapToLong(row -> column.subclass().isInstance(row) ? 1 : 0).toArray();
+        }
         if (column.field() == null) {
             return java.util.Arrays.stream(planningIdRanks(owner)).asLongStream().toArray();
         }
@@ -745,17 +841,19 @@ public final class ProblemTables {
         if (byType.containsKey(type)) {
             throw new Refusal("two collections of " + type.getName());
         }
-        var info = new ClassInfo(classes.size(), type, entity, rows);
+        var info = new ClassInfo(classes.size(), type, entity, rows, loose);
         classes.add(info);
         byType.put(type, info);
         return info;
     }
 
     /**
-     * @return every distinct object of a class held by a field of some row of an existing table, in discovery order
+     * @return every distinct object of a class held by a field of some row of an existing table, in discovery order;
+     *         among loose objects, distinct by {@code equals}
      */
     private List<Object> reachableObjects(Class<?> type) {
         var seen = Collections.newSetFromMap(new IdentityHashMap<Object, Boolean>());
+        var seenByEquals = new HashSet<Object>();
         var found = new ArrayList<Object>();
         for (ClassInfo info : List.copyOf(classes)) {
             for (Field field : Members.allFields(info.type)) {
@@ -764,7 +862,7 @@ public final class ProblemTables {
                 }
                 for (Object row : info.rows) {
                     var value = Members.read(field, row);
-                    if (value != null && seen.add(value)) {
+                    if (value != null && seen.add(value) && (!loose || seenByEquals.add(value))) {
                         found.add(value);
                     }
                 }
@@ -779,6 +877,9 @@ public final class ProblemTables {
      */
     private static List<?> rowsOf(Field field, Object solution) {
         var value = Members.read(field, solution);
+        if (isSingleProperty(field)) {
+            return value == null ? List.of() : List.of(value);
+        }
         if (value instanceof List<?> list) {
             return list;
         }

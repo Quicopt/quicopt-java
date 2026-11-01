@@ -262,6 +262,54 @@ class EncoderTest {
     }
 
     /**
+     * A filtering joiner in a join goes out as a filter on the joined pairs, after the join's other joiners; one in
+     * {@code ifNotExists} is refused by name.
+     */
+    @Test
+    void filteringJoinersFilterTheJoinedPairs() {
+        var problem = encode(MeetingPlan.smallWeek(), FilteringConstraints.class);
+        var streams = problem.getStreamsList();
+        int join = streams.indexOf(streams.stream().filter(s -> s.getKind() == StreamKind.JOIN).findFirst()
+                .orElseThrow());
+        assertEquals(1, streams.get(join).getJoinersCount() - 1); // equal(slot), then the rank comparison
+        assertTrue(streams.stream().anyMatch(s -> s.getKind() == StreamKind.FILTER && s.getInput() == join));
+        var refusal = assertThrows(Refusal.class, () -> encode(MeetingPlan.smallWeek(), FilteringExistsConstraints.class));
+        assertTrue(refusal.getMessage().contains("a filtering joiner in ifExists or ifNotExists"));
+    }
+
+    /**
+     * Two meetings in one slot with more attendees together than ten, found with a filtering joiner.
+     */
+    public static class FilteringConstraints implements ConstraintProvider {
+
+        @Override
+        public Constraint[] defineConstraints(ConstraintFactory factory) {
+            return new Constraint[] {
+                    factory.forEachUniquePair(Meeting.class, Joiners.equal(Meeting::getSlot),
+                            Joiners.filtering((a, b) -> a.getAttendees() + b.getAttendees() > 10))
+                            .penalize(HardSoftScore.ONE_SOFT)
+                            .asConstraint("Crowded slot")
+            };
+        }
+    }
+
+    /**
+     * Meetings with no other meeting in their slot, found with a filtering joiner in {@code ifNotExists}.
+     */
+    public static class FilteringExistsConstraints implements ConstraintProvider {
+
+        @Override
+        public Constraint[] defineConstraints(ConstraintFactory factory) {
+            return new Constraint[] {
+                    factory.forEach(Meeting.class)
+                            .ifNotExists(Meeting.class, Joiners.filtering((a, b) -> a != b && a.getSlot() == b.getSlot()))
+                            .penalize(HardSoftScore.ONE_SOFT)
+                            .asConstraint("Lonely meeting")
+            };
+        }
+    }
+
+    /**
      * @return the id of the class with the given simple name in an encoded problem
      */
     private static int classId(PlanningProblem problem, String name) {

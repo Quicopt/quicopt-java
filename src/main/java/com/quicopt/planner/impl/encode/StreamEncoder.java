@@ -10,10 +10,14 @@ import java.util.Map;
 
 import com.quicopt.planner.api.score.Score;
 import com.quicopt.planner.impl.bavet.bi.joiner.DefaultBiJoiner;
+import com.quicopt.planner.impl.bavet.bi.joiner.FilteringBiJoiner;
 import com.quicopt.planner.impl.bavet.common.joiner.AbstractJoiner;
 import com.quicopt.planner.impl.bavet.penta.joiner.DefaultPentaJoiner;
+import com.quicopt.planner.impl.bavet.penta.joiner.FilteringPentaJoiner;
 import com.quicopt.planner.impl.bavet.quad.joiner.DefaultQuadJoiner;
+import com.quicopt.planner.impl.bavet.quad.joiner.FilteringQuadJoiner;
 import com.quicopt.planner.impl.bavet.tri.joiner.DefaultTriJoiner;
+import com.quicopt.planner.impl.bavet.tri.joiner.FilteringTriJoiner;
 import com.quicopt.planner.impl.encode.ProblemTables.ClassInfo;
 import com.quicopt.planner.impl.score.stream.RecordedStreams;
 import com.quicopt.planner.impl.score.stream.RecordedStreams.Node;
@@ -133,6 +137,10 @@ final class StreamEncoder {
      * @return the root's stream id
      */
     private int root(Class<?> type, boolean filtered) {
+        var base = tables.classOf(type) == null ? tables.superclassTable(type) : null;
+        if (base != null) {
+            return subclassRoot(type, base, filtered);
+        }
         var info = classInfo(type);
         var inverse = filtered && tables.shadowsAsData ? tables.listInverseField(info) : null;
         if (inverse == null) {
@@ -152,20 +160,39 @@ final class StreamEncoder {
     }
 
     /**
+     * @return the root over a subclass of a table's class: the root over that class, filtered on whether each row is
+     *         an instance of the subclass; its tuples hold rows of that class
+     */
+    private int subclassRoot(Class<?> subclass, ClassInfo base, boolean filtered) {
+        var key = base.id + ":" + subclass.getName() + (filtered ? ":assigned" : ":all");
+        var known = roots.get(key);
+        if (known != null) {
+            return known;
+        }
+        int input = root(base.type, filtered);
+        int id = add(StreamNode.newBuilder().setKind(StreamKind.FILTER).setInput(input)
+                .setPredicate(lifter.isInstance(base, subclass).node()), tuples.get(input));
+        roots.put(key, id);
+        return id;
+    }
+
+    /**
      * @return {@code forEachUniquePair(C, joiners)}: a self-join of {@code forEach(C)} with {@code lessThan} on the
      *         planning-id rank
      */
     private int uniquePair(Node node) {
-        var info = classInfo((Class<?>) node.args().get(0));
-        int each = root(info.type, true);
+        var paired = (Class<?>) node.args().get(0);
+        var info = classInfo(paired);
+        int each = root(paired, true);
         var type = Type.ref(info);
         var wire = StreamNode.newBuilder().setKind(StreamKind.JOIN).setInput(each).setRight(each);
-        node.args().subList(1, node.args().size()).forEach(j -> wire.addAllJoiners(joiners(j, List.of(type),
-                List.of(type))));
+        var joinerArgs = node.args().subList(1, node.args().size());
+        joinerArgs.stream().filter(j -> filterOf(j) == null)
+                .forEach(j -> wire.addAllJoiners(joiners(j, List.of(type), List.of(type))));
         var rank = tables.rankColumn(info);
         var left = ir.add("column", List.of(arg(type, 0).node()), Type.LONG, info.id, rank.index(), 0);
         wire.addJoiners(Joiner.newBuilder().setJoinerType(JoinerType.LESS_THAN).setLeft(left.node()).setRight(left.node()));
-        return add(wire, List.of(type, type));
+        return filtered(add(wire, List.of(type, type)), joinerArgs);
     }
 
     /**
@@ -175,11 +202,44 @@ final class StreamEncoder {
         int input = stream(node.input());
         int right = rightSide(node.args().get(0));
         var wire = StreamNode.newBuilder().setKind(StreamKind.JOIN).setInput(input).setRight(right);
-        node.args().subList(1, node.args().size())
+        var joinerArgs = node.args().subList(1, node.args().size());
+        joinerArgs.stream().filter(j -> filterOf(j) == null)
                 .forEach(j -> wire.addAllJoiners(joiners(j, tuples.get(input), tuples.get(right))));
         var tuple = new ArrayList<>(tuples.get(input));
         tuple.addAll(tuples.get(right));
-        return add(wire, tuple);
+        return filtered(add(wire, tuple), joinerArgs);
+    }
+
+    /**
+     * A join's filtering joiners, applied after it: a pair passes a filtering joiner exactly when the joined tuple
+     * passes its predicate, so each becomes a filter on the joined stream.
+     *
+     * @return the joined stream filtered by each filtering joiner among the join's joiners
+     */
+    private int filtered(int joined, List<Object> joinerArgs) {
+        int stream = joined;
+        for (Object joiner : joinerArgs) {
+            var predicate = filterOf(joiner);
+            if (predicate != null) {
+                var lifted = lifter.lift(predicate, tuples.get(stream));
+                stream = add(StreamNode.newBuilder().setKind(StreamKind.FILTER).setInput(stream)
+                        .setPredicate(lifted.node()), tuples.get(stream));
+            }
+        }
+        return stream;
+    }
+
+    /**
+     * @return the predicate of a filtering joiner, or {@code null} for any other joiner
+     */
+    private static Object filterOf(Object joiner) {
+        return switch (joiner) {
+            case FilteringBiJoiner<?, ?> bi -> bi.getFilter();
+            case FilteringTriJoiner<?, ?, ?> tri -> tri.getFilter();
+            case FilteringQuadJoiner<?, ?, ?, ?> quad -> quad.getFilter();
+            case FilteringPentaJoiner<?, ?, ?, ?, ?> penta -> penta.getFilter();
+            default -> null;
+        };
     }
 
     /**
@@ -243,14 +303,15 @@ final class StreamEncoder {
     private int complement(Node node) {
         int input = stream(node.input());
         var inputTuple = tuples.get(input);
-        var info = classInfo((Class<?>) node.args().get(0));
+        var complemented = (Class<?>) node.args().get(0);
+        var info = classInfo(complemented);
         var type = Type.ref(info);
         if (!inputTuple.get(0).equals(type) || !tables.equalsIsRowIdentity(info)) {
             throw new Refusal("complement over " + info.type.getSimpleName() + " with equal rows or another first element");
         }
         int firsts = add(StreamNode.newBuilder().setKind(StreamKind.MAP).setInput(input)
                 .addFunctions(arg(type, 0).node()), List.of(type));
-        int missing = add(StreamNode.newBuilder().setKind(StreamKind.IF_NOT_EXISTS).setInput(root(info.type, true))
+        int missing = add(StreamNode.newBuilder().setKind(StreamKind.IF_NOT_EXISTS).setInput(root(complemented, true))
                 .setRight(firsts).addJoiners(Joiner.newBuilder().setJoinerType(JoinerType.EQUAL)
                         .setLeft(arg(type, 0).node()).setRight(arg(type, 0).node())), List.of(type));
         var concat = StreamNode.newBuilder().setKind(StreamKind.CONCAT).setInput(input).setRight(missing);
@@ -297,9 +358,12 @@ final class StreamEncoder {
 
     /**
      * @return the joiners inside one joiner object, their key functions translated over the two sides' tuples
-     * @throws Refusal for a filtering joiner, which has no translation yet
+     * @throws Refusal for a filtering joiner, which only a join can apply (as a filter after it)
      */
     private List<Joiner> joiners(Object joiner, List<Type> left, List<Type> right) {
+        if (filterOf(joiner) != null) {
+            throw new Refusal("a filtering joiner in ifExists or ifNotExists");
+        }
         if (!(joiner instanceof AbstractJoiner<?> keyed)) {
             throw new Refusal("the joiner " + joiner.getClass().getSimpleName() + " (only equal and comparison joiners"
                     + " so far)");
@@ -346,6 +410,9 @@ final class StreamEncoder {
      */
     private ClassInfo classInfo(Class<?> type) {
         var info = tables.classOf(type);
+        if (info == null) {
+            info = tables.superclassTable(type);
+        }
         if (info == null) {
             throw new Refusal("a stream over " + type.getSimpleName() + ", which has no table");
         }
