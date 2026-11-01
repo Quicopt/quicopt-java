@@ -44,8 +44,11 @@ final class Intrinsics {
         return switch (owner) {
             case "java/time/Duration" -> duration(name, args);
             case "java/time/LocalDateTime" -> dateTime(name, args);
+            case "java/time/OffsetDateTime" -> offsetDateTime(name, args);
             case "java/time/LocalDate" -> date(name, args);
             case "java/time/LocalTime" -> time(name, args);
+            case "java/time/temporal/ChronoUnit" -> name.equals("between") && args.size() == 3
+                    ? unitsBetween(args.get(0), args.get(1), args.get(2)) : null;
             case "java/util/Set", "java/util/List", "java/util/Collection" -> collection(name, args);
             case "java/lang/Integer", "java/lang/Long", "java/lang/Boolean" -> boxing(name, args);
             case "java/lang/Math" -> math(name, args);
@@ -68,6 +71,16 @@ final class Intrinsics {
             case "equals" -> equality(a.get(0), a.get(1));
             case "plus" -> ir.apply("add", Type.DURATION, a.get(0), a.get(1));
             case "minus" -> ir.apply("sub", Type.DURATION, a.get(0), a.get(1));
+            case "plusSeconds" -> shiftedDuration(a.get(0), a.get(1), NANOS_PER_SECOND, "add");
+            case "plusMinutes" -> shiftedDuration(a.get(0), a.get(1), NANOS_PER_MINUTE, "add");
+            case "plusHours" -> shiftedDuration(a.get(0), a.get(1), NANOS_PER_HOUR, "add");
+            case "plusDays" -> shiftedDuration(a.get(0), a.get(1), NANOS_PER_DAY, "add");
+            case "minusSeconds" -> shiftedDuration(a.get(0), a.get(1), NANOS_PER_SECOND, "sub");
+            case "minusMinutes" -> shiftedDuration(a.get(0), a.get(1), NANOS_PER_MINUTE, "sub");
+            case "minusHours" -> shiftedDuration(a.get(0), a.get(1), NANOS_PER_HOUR, "sub");
+            case "minusDays" -> shiftedDuration(a.get(0), a.get(1), NANOS_PER_DAY, "sub");
+            case "negated" -> ir.apply("neg", Type.DURATION, a.get(0));
+            case "abs" -> ir.apply("abs", Type.DURATION, a.get(0));
             case "toNanos" -> retype(a.get(0), Type.LONG);
             case "toSeconds", "getSeconds" -> wholeSeconds(a.get(0));
             case "toMillis" -> floorDiv(a.get(0), 1_000_000L, Type.LONG);
@@ -82,6 +95,21 @@ final class Intrinsics {
             case "truncatedTo" -> ir.apply("truncate", Type.DURATION, a.get(0),
                     ir.constant(Type.LONG, unitNanos(a.get(1))));
             default -> null;
+        };
+    }
+
+    /**
+     * {@code java.time.OffsetDateTime} methods. Every offset date-time of a problem shares one offset and is sent as
+     * its local date-time, so the methods that compare, subtract, shift or read the date are those of
+     * {@code LocalDateTime}; the ones that read the offset or the instant have no translation.
+     *
+     * @return the method's value, or {@code null} when it has no translation
+     */
+    private Val offsetDateTime(String name, List<Val> a) {
+        return switch (name) {
+            case "toLocalDateTime" -> a.get(0);
+            case "of" -> null;
+            default -> dateTime(name, a);
         };
     }
 
@@ -290,6 +318,13 @@ final class Intrinsics {
     }
 
     /**
+     * @return a duration lengthened or shortened by {@code amount} units
+     */
+    private Val shiftedDuration(Val duration, Val amount, long nanosPerUnit, String op) {
+        return ir.apply(op, Type.DURATION, duration, scaled(amount, nanosPerUnit, Type.DURATION));
+    }
+
+    /**
      * @return a date-time moved by {@code amount} units
      */
     private Val shifted(Val dateTime, Val amount, long nanosPerUnit, String op) {
@@ -326,6 +361,29 @@ final class Intrinsics {
             throw new Refusal("a time unit that is not a ChronoUnit constant");
         }
         return ChronoUnit.values()[(int) ir.constantValue(unit)].getDuration().toNanos();
+    }
+
+    /**
+     * {@code unit.between(from, to)}: the whole units from one date, date-time or time to another, truncated toward
+     * zero as the JDK truncates them. Dates count in days and weeks, date-times in units up to a week (a day there
+     * is a whole 24 hours, which is how the JDK moves the end date before counting), times in units up to half a
+     * day; months and longer units have no fixed length and no translation.
+     *
+     * @return the number of units, a {@code long}
+     * @throws Refusal for operands of different kinds, a unit that is not a constant, or one these kinds cannot count
+     */
+    private Val unitsBetween(Val unit, Val from, Val to) {
+        var kind = from.type().kind();
+        if (kind != to.type().kind() || (kind != Kind.DATE && kind != Kind.DATETIME && kind != Kind.TIME)) {
+            throw new Refusal("ChronoUnit.between on " + from.type() + " and " + to.type());
+        }
+        long nanos = kind == Kind.TIME ? timeBasedUnitNanos(unit) : unitNanos(unit);
+        if (nanos > 7 * NANOS_PER_DAY || kind == Kind.DATE && nanos % NANOS_PER_DAY != 0) {
+            throw new Refusal("ChronoUnit.between in " + ChronoUnit.values()[(int) ir.constantValue(unit)]
+                    + " on a " + from.type());
+        }
+        long perUnit = kind == Kind.DATE ? nanos / NANOS_PER_DAY : nanos;
+        return ir.apply("div", Type.LONG, ir.apply("sub", Type.LONG, to, from), ir.constant(Type.LONG, perUnit));
     }
 
     /**

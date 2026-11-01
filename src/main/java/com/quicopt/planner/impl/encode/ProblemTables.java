@@ -11,6 +11,7 @@ import java.time.Duration;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
+import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.Collection;
@@ -232,6 +233,8 @@ public final class ProblemTables {
     final Class<?> solutionClass;
     /** Whether shadow variables are read as the objects hold them, like other fields, instead of being computed. */
     final boolean shadowsAsData;
+    /** The offset that every {@code OffsetDateTime} of the problem has, once one was encoded. */
+    private ZoneOffset offset;
     /** Whether the objects were given loose, so that copies of a row stand for it by {@code equals}. */
     private final boolean loose;
     /** The objects a constraint test gave, when the tables are for scoring them, else {@code null}. */
@@ -505,7 +508,7 @@ public final class ProblemTables {
         if (type == LocalDate.class) {
             return Type.DATE;
         }
-        if (type == LocalDateTime.class) {
+        if (type == LocalDateTime.class || type == OffsetDateTime.class) {
             return Type.DATETIME;
         }
         if (type == Duration.class) {
@@ -660,7 +663,8 @@ public final class ProblemTables {
             case ENUM -> ((Enum<?>) value).ordinal();
             case TIME -> ((LocalTime) value).toNanoOfDay();
             case DATE -> ((LocalDate) value).toEpochDay();
-            case DATETIME -> datetimeNanos((LocalDateTime) value);
+            case DATETIME -> value instanceof OffsetDateTime offsetDateTime ? offsetDateTimeNanos(offsetDateTime)
+                    : datetimeNanos((LocalDateTime) value);
             case DURATION -> ((Duration) value).toNanos();
             case REF -> rowOf(type.refClass(), value);
             default -> throw new Refusal("a value of kind " + type.kind() + " in a number column");
@@ -683,6 +687,24 @@ public final class ProblemTables {
                     + " planning id.");
         }
         return row;
+    }
+
+    /**
+     * A date-time with an offset, as the local date-time it names. Every such date-time of a problem must have the
+     * same offset: then comparing, subtracting, shifting and reading the date agree with the local date-times, and
+     * the wire's date-times carry no offset.
+     *
+     * @return the nanoseconds of its local date-time since 1970-01-01T00:00
+     * @throws Refusal when its offset differs from the offset of another date-time of the problem
+     */
+    long offsetDateTimeNanos(OffsetDateTime value) {
+        if (offset == null) {
+            offset = value.getOffset();
+        } else if (!offset.equals(value.getOffset())) {
+            throw new Refusal("date-times with different offsets (" + offset + " and " + value.getOffset()
+                    + "); only date-times that share one offset can be compared on the wire");
+        }
+        return datetimeNanos(value.toLocalDateTime());
     }
 
     /**

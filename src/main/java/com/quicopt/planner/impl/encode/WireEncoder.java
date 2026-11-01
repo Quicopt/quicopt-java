@@ -122,8 +122,12 @@ public final class WireEncoder {
     }
 
     /**
-     * @return one class's table: the columns translated code reads, its variables and shadow variables
-     * @throws Refusal for a list variable beside other variables of the same class
+     * One class's table: the columns translated code reads, its variables and shadow variables, and for solving its
+     * pins. Scoring sends no pins, which change nothing in a score, and accepts a list variable beside other
+     * variables of its class, which only the search cannot handle.
+     *
+     * @return the table
+     * @throws Refusal for solving, a list variable beside other variables of the same class
      */
     private ClassDecl classDecl(ClassInfo info, Map<ShadowInfo, ShadowVariable> shadows) {
         var decl = ClassDecl.newBuilder().setName(info.type.getSimpleName()).setEntity(info.entity)
@@ -131,7 +135,8 @@ public final class WireEncoder {
         for (ProblemTables.ColumnInfo column : info.columns) {
             decl.addColumns(column(info, column));
         }
-        if (info.variables.size() > 1 && info.variables.stream().anyMatch(ProblemTables.VariableInfo::list)) {
+        if (!tables.shadowsAsData && info.variables.size() > 1
+                && info.variables.stream().anyMatch(ProblemTables.VariableInfo::list)) {
             throw new Refusal("the class " + info.type.getSimpleName() + " with a list variable beside other variables");
         }
         for (ProblemTables.VariableInfo variable : info.variables) {
@@ -142,7 +147,9 @@ public final class WireEncoder {
             }
         }
         info.shadows.forEach(shadow -> decl.addShadows(shadows.get(shadow)));
-        decl.addAllPinned(pinned(info));
+        if (!tables.shadowsAsData) {
+            decl.addAllPinned(pinned(info));
+        }
         return decl.build();
     }
 

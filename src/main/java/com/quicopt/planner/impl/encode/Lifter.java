@@ -886,6 +886,9 @@ final class Lifter implements Opcodes {
         if (value instanceof LocalDateTime dt) {
             return ir.constant(Type.DATETIME, ProblemTables.datetimeNanos(dt));
         }
+        if (value instanceof java.time.OffsetDateTime dt) {
+            return ir.constant(Type.DATETIME, tables.offsetDateTimeNanos(dt));
+        }
         if (value instanceof Duration d) {
             return ir.constant(Type.DURATION, d.toNanos());
         }
