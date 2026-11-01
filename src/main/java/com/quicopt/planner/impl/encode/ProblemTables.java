@@ -178,6 +178,18 @@ public final class ProblemTables {
     }
 
     /**
+     * The inverse relation of a basic variable: a collection on each of the variable's values holding the entities
+     * whose variable has that value. The client fills it after solving; the service does not keep it, so no
+     * translated function may read it while solving.
+     *
+     * @param owner the class of the variable's values, which declares the collection
+     * @param field the collection field
+     * @param sourceVariable the name of the basic variable it follows
+     */
+    public record InverseCollection(ClassInfo owner, Field field, String sourceVariable) {
+    }
+
+    /**
      * A field or getter that pins an entity: with {@code @PlanningPin}, a boolean that keeps the whole entity as it
      * is; with {@code @PlanningPinToIndex}, an int that keeps its list as it is up to that index.
      *
@@ -257,6 +269,8 @@ public final class ProblemTables {
     private final Map<String, Long> stringIds = new HashMap<>();
     private final Map<ClassInfo, Boolean> identityEquality = new HashMap<>();
     private final Map<Class<?>, java.util.Optional<Class<?>>> reachedEntities = new HashMap<>();
+    /** The inverse relation collections of basic variables, which the client keeps. */
+    final List<InverseCollection> inverseCollections = new ArrayList<>();
     /** For each scalar variable's field, the values it was sent with, by their encoding. */
     private final Map<Field, Map<Long, Object>> scalarValues = new HashMap<>();
 
@@ -609,6 +623,20 @@ public final class ProblemTables {
      */
     ShadowInfo shadow(ClassInfo owner, Field field) {
         return owner.shadows.stream().filter(s -> s.field().equals(field)).findFirst().orElse(null);
+    }
+
+    /**
+     * @return the inverse relation collections of basic variables, which the client keeps
+     */
+    public List<InverseCollection> inverseCollections() {
+        return inverseCollections;
+    }
+
+    /**
+     * @return whether a field is the inverse relation collection of a basic variable
+     */
+    boolean isInverseCollection(Field field) {
+        return inverseCollections.stream().anyMatch(c -> c.field().equals(field));
     }
 
     /**

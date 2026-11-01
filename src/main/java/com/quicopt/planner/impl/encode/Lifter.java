@@ -870,6 +870,10 @@ final class Lifter implements Opcodes {
                     ? ir.add("list_variable", List.of(object.node()), Type.list(value), owner.id, variable.index(), 0)
                     : ir.add("variable", List.of(object.node()), value, owner.id, variable.index(), 0);
         }
+        if (tables.isInverseCollection(field)) {
+            throw new Refusal("reads " + owner.type.getSimpleName() + "." + field.getName() + ", the inverse relation"
+                    + " collection of a basic variable, which the service does not keep yet");
+        }
         var shadow = tables.shadow(owner, field);
         if (shadow != null) {
             if (shadow.type() == null) {

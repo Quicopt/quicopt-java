@@ -17,9 +17,10 @@ import com.quicopt.planner.impl.encode.ProblemTables.VariableInfo;
 import com.quicopt.planner.impl.encode.ShadowInfo;
 
 /**
- * Brings a solution's shadow variables up to date after its genuine variables were set: the list shadows (inverse
- * relation, index, previous and next element) from the lists, and every declarative shadow by calling the model's
- * own supplier method, in an order where each supplier sees final values.
+ * Brings a solution's shadow variables up to date after its genuine variables were set: the inverse relation
+ * collections of basic variables, the list shadows (inverse relation, index, previous and next element) from the
+ * lists, and every declarative shadow by calling the model's own supplier method, in an order where each supplier
+ * sees final values.
  */
 final class ShadowCalculator {
 
@@ -33,6 +34,7 @@ final class ShadowCalculator {
      * Updates every shadow variable of the solution the tables were read from.
      */
     static void update(ProblemTables tables) {
+        tables.inverseCollections().forEach(inverse -> fillInverse(tables, inverse));
         var order = new ArrayList<Object>();
         var placed = new IdentityHashMap<Object, Boolean>();
         for (ClassInfo owner : tables.classes()) {
@@ -55,6 +57,34 @@ final class ShadowCalculator {
         for (ClassInfo info : tables.classes()) {
             if (info.entity() && info.rows().stream().noneMatch(placed::containsKey)) {
                 settle(info.rows(), info);
+            }
+        }
+    }
+
+    /**
+     * Fills the inverse relation collection of a basic variable on each of its values: a new collection, of the
+     * field's kind, with the entities whose variable has that value, in table order.
+     */
+    private static void fillInverse(ProblemTables tables, ProblemTables.InverseCollection inverse) {
+        var holders = new IdentityHashMap<Object, java.util.Collection<Object>>();
+        for (Object value : inverse.owner().rows()) {
+            java.util.Collection<Object> collection = java.util.Set.class.isAssignableFrom(inverse.field().getType())
+                    ? new java.util.LinkedHashSet<>() : new ArrayList<>();
+            holders.put(value, collection);
+            Members.write(inverse.field(), value, collection);
+        }
+        for (ClassInfo entities : tables.classes()) {
+            for (VariableInfo variable : entities.variables()) {
+                if (variable.list() || variable.valueClass() != inverse.owner()
+                        || !variable.field().getName().equals(inverse.sourceVariable())) {
+                    continue;
+                }
+                for (Object entity : entities.rows()) {
+                    var value = Members.read(variable.field(), entity);
+                    if (value != null) {
+                        holders.get(value).add(entity);
+                    }
+                }
             }
         }
     }
@@ -117,7 +147,9 @@ final class ShadowCalculator {
 
     /**
      * Calls the declarative shadows' suppliers of some rows of one class until their values stop changing, which
-     * settles shadows that read other shadows of the same rows.
+     * settles shadows that read other shadows of the same rows. A supplier may throw while a shadow it reads is not
+     * set yet, which the solver's own order (by sources) never shows it; it is called again in the next round, and
+     * its exception is passed on only when it still throws once no value changes any more.
      */
     private static void settle(List<?> rows, ClassInfo info) {
         var suppliers = info.shadows().stream().filter(s -> s.kind() == ShadowInfo.Kind.SUPPLIER).toList();
@@ -127,12 +159,20 @@ final class ShadowCalculator {
         int rounds = rows.size() * suppliers.size() + 1;
         for (int round = 0; round < rounds; round++) {
             boolean changed = false;
+            RuntimeException thrown = null;
             for (Object row : rows) {
                 for (ShadowInfo shadow : suppliers) {
-                    changed |= supply(row, shadow);
+                    try {
+                        changed |= supply(row, shadow);
+                    } catch (RuntimeException e) {
+                        thrown = thrown == null ? e : thrown;
+                    }
                 }
             }
             if (!changed) {
+                if (thrown != null) {
+                    throw thrown;
+                }
                 return;
             }
         }

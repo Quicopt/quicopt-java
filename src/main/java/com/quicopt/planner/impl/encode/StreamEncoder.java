@@ -58,14 +58,16 @@ final class StreamEncoder {
     /**
      * @param asConstraint the recorded constraint
      * @param scoreClass the solution's score class, which every constraint weight must have
-     * @return one constraint: {@code asConstraint} on top of {@code penalize}, {@code reward} or {@code impact}
+     * @param overrides the solution's constraint weight overrides, by constraint id
+     * @return one constraint: {@code asConstraint} on top of {@code penalize}, {@code reward} or {@code impact},
+     *         with its weight overridden where the solution says so
      * @throws Refusal when a function or stream shape has no translation
      * @throws IllegalArgumentException when the constraint weight's score class is not the solution's
      */
-    ConstraintDecl constraint(Node asConstraint, Class<?> scoreClass) {
+    ConstraintDecl constraint(Node asConstraint, Class<?> scoreClass, Map<String, Score<?>> overrides) {
         var impact = asConstraint.input();
         var name = RecordedStreams.constraintId(asConstraint);
-        var weight = (Score<?>) impact.args().get(0);
+        var weight = overrides.getOrDefault(name, (Score<?>) impact.args().get(0));
         if (weight.getClass() != scoreClass) {
             throw new IllegalArgumentException("The constraint (" + name + ") has a weight of type "
                     + weight.getClass().getSimpleName() + ", but the solution's score is a "

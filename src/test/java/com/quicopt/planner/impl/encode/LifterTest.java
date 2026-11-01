@@ -136,15 +136,21 @@ class LifterTest {
     }
 
     /**
-     * A supplier is evaluated again only when a source changes, so a variable it reads that no source names is
-     * refused. Courier routes name all they read and pass, which the encoding of the route model shows.
+     * A supplier is evaluated again only when a source changes, so a variable it reads that no source names
+     * becomes a further source: the label's number names the desk and also reads the backup desk. Courier routes
+     * name all they read and get no further source.
      */
     @Test
-    void suppliersReadOnlyWhatTheirSourcesName() {
+    void suppliersGetSourcesForWhatTheyRead() {
         var plan = new LabelPlan(List.of(new Desk(0), new Desk(1)), List.of(new Label(0)));
-        var refusal = assertThrows(Refusal.class, () -> FunctionCheck.encode(plan, LabelPlan.Constraints.class));
-        assertTrue(refusal.getMessage().contains("reads backupDesk"), refusal.getMessage());
-        FunctionCheck.encode(RoutePlan.smallTown(), RouteConstraints.class);
+        var label = FunctionCheck.encode(plan, LabelPlan.Constraints.class).getClassesList().stream()
+                .filter(c -> c.getName().equals("Label")).findFirst().orElseThrow();
+        var number = label.getShadowsList().stream().filter(s -> s.getName().equals("number")).findFirst().orElseThrow();
+        assertEquals(2, number.getSourcesCount());
+        var routes = FunctionCheck.encode(RoutePlan.smallTown(), RouteConstraints.class);
+        var declared = routes.getClassesList().stream().flatMap(c -> c.getShadowsList().stream())
+                .filter(s -> s.getSourcesCount() > 0).findFirst().orElseThrow();
+        assertEquals(2, declared.getSourcesCount());
     }
 
     /**

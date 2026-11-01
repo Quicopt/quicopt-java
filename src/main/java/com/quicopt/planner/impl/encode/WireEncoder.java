@@ -9,9 +9,11 @@ import java.util.List;
 import java.util.Map;
 import java.util.function.IntUnaryOperator;
 
+import com.quicopt.planner.api.domain.solution.ConstraintWeightOverrides;
 import com.quicopt.planner.api.domain.solution.PlanningScore;
 import com.quicopt.planner.api.domain.variable.ShadowSources;
 import com.quicopt.planner.api.score.HardMediumSoftBigDecimalScore;
+import com.quicopt.planner.api.score.Score;
 import com.quicopt.planner.api.score.HardMediumSoftScore;
 import com.quicopt.planner.api.score.HardSoftBigDecimalScore;
 import com.quicopt.planner.api.score.HardSoftScore;
@@ -73,8 +75,17 @@ public final class WireEncoder {
         var problem = PlanningProblem.newBuilder();
         var scoreClass = scoreClass(tables.solutionClass);
         var definition = scoreDefinition(scoreClass);
+        var overrides = weightOverrides();
+        var ids = new java.util.HashSet<String>();
         for (RecordedStreams.Node constraint : constraints) {
-            problem.addConstraints(streams.constraint(constraint, scoreClass));
+            problem.addConstraints(streams.constraint(constraint, scoreClass, overrides));
+            ids.add(RecordedStreams.constraintId(constraint));
+        }
+        var unknown = overrides.keySet().stream().filter(id -> !ids.contains(id)).sorted().toList();
+        if (!unknown.isEmpty()) {
+            throw new IllegalStateException("The constraint weight overrides contain the following constraints ("
+                    + unknown + ") that are not in the user-defined constraints (" + ids.stream().sorted().toList()
+                    + ").\nMaybe check your ConstraintProvider for missing constraints.");
         }
         var shadows = shadows();
         problem.setScoreDefinition(definition);
@@ -89,6 +100,40 @@ public final class WireEncoder {
         StringRanks.apply(problem, tables.rankStrings());
         problem.setSolverConfig(solverConfig);
         return problem.build();
+    }
+
+    /**
+     * The solution's constraint weight overrides: the value of its field or getter of type
+     * {@link ConstraintWeightOverrides}, which replaces the weights of the constraints it names.
+     *
+     * @return the overriding weights by constraint id; empty without a solution, such a member, or a value in it
+     */
+    private Map<String, Score<?>> weightOverrides() {
+        if (tables.solution == null) {
+            return Map.of();
+        }
+        Object value = null;
+        for (Field field : Members.allFields(tables.solutionClass)) {
+            if (ConstraintWeightOverrides.class.isAssignableFrom(field.getType())) {
+                value = Members.read(field, tables.solution);
+            }
+        }
+        if (value == null) {
+            for (java.lang.reflect.Method method : tables.solutionClass.getMethods()) {
+                if (method.getParameterCount() == 0 && ConstraintWeightOverrides.class.isAssignableFrom(method.getReturnType())) {
+                    value = Members.call(method, tables.solution);
+                }
+            }
+        }
+        if (value == null) {
+            return Map.of();
+        }
+        var overrides = (ConstraintWeightOverrides<?>) value;
+        var weights = new HashMap<String, Score<?>>();
+        for (String id : overrides.getKnownConstraintIds()) {
+            weights.put(id, overrides.getConstraintWeight(id));
+        }
+        return weights;
     }
 
     /**
@@ -224,7 +269,7 @@ public final class WireEncoder {
                 for (String path : sourcePaths(owner, shadow.method())) {
                     sources.add(sourcePath(owner, path));
                 }
-                requireDeclaredReads(shadow, supplier, sources);
+                sources.addAll(undeclaredReads(shadow, supplier, sources));
                 wire.setKind(ShadowKind.DECLARATIVE).setSupplier(supplier.node()).addAllSources(sources);
             }
             case CASCADING -> throw new Refusal("the cascading update shadow variable " + shadow.field().getName());
@@ -233,14 +278,19 @@ public final class WireEncoder {
     }
 
     /**
-     * Checks that a supplier reads no variable its sources leave out. A supplier is evaluated again only when one
-     * of its sources changes, so a variable it reads that no source names would go stale. A read is named when its
-     * path of member reads from the supplier's own row is a prefix of a source path; reads of facts need no name.
+     * The variables a supplier reads that its sources leave out, as further sources. The service evaluates a
+     * supplier again when one of its sources changes, so a variable it reads that no source names would go stale.
+     * The solver's own incremental updates can leave such a value stale too, but any score computed from scratch
+     * calls the supplier afresh; with the further sources, the service's values always equal those. A read is
+     * named when its path of member reads from the supplier's own row is a prefix of a source path; reads of facts
+     * need no name.
      *
-     * @throws Refusal for a variable read that no source path names, and for one through anything other than member
-     *         reads from the supplier's row, which no source path can name
+     * @return a source path for each variable read that no source path names
+     * @throws Refusal for a variable read through anything other than member reads from the supplier's row, which
+     *         no source path can name
      */
-    private void requireDeclaredReads(ShadowInfo shadow, Ir.Val supplier, List<SourcePath> sources) {
+    private List<SourcePath> undeclaredReads(ShadowInfo shadow, Ir.Val supplier, List<SourcePath> sources) {
+        var further = new ArrayList<SourcePath>();
         var paths = new HashMap<Integer, List<MemberRef>>();
         var reached = ir.reachedFrom(supplier.node());
         for (int id = reached.nextSetBit(0); id >= 0; id = reached.nextSetBit(id + 1)) { // operands come first
@@ -255,11 +305,12 @@ public final class WireEncoder {
                 throw new Refusal(supplierName + " reads " + pathName(List.of(step(node))) + " of an object it does"
                         + " not reach by member reads from its own entity, which no @ShadowSources path can name");
             }
-            if (sources.stream().noneMatch(source -> isPrefix(path, source.getStepsList()))) {
-                throw new Refusal(supplierName + " reads " + pathName(path) + ", which its @ShadowSources do not"
-                        + " name: the shadow variable would not be updated when that changes");
+            if (sources.stream().noneMatch(source -> isPrefix(path, source.getStepsList()))
+                    && further.stream().noneMatch(source -> isPrefix(path, source.getStepsList()))) {
+                further.add(SourcePath.newBuilder().addAllSteps(path).build());
             }
         }
+        return further;
     }
 
     /**
