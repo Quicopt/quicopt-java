@@ -15,12 +15,15 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.time.Duration;
+import java.util.List;
 
 import com.quicopt.planner.api.score.HardSoftScore;
 import com.quicopt.planner.api.score.Score;
 import com.quicopt.planner.api.score.stream.ConstraintProvider;
 import com.quicopt.planner.api.solver.SolutionManager;
 import com.quicopt.planner.api.solver.SolutionUpdatePolicy;
+import com.quicopt.planner.api.solver.SolverManager;
+import com.quicopt.planner.api.solver.SolverStatus;
 import com.quicopt.planner.api.solver.SolverFactory;
 import com.quicopt.planner.config.solver.SolverConfig;
 import com.quicopt.planner.impl.encode.ScoreCodec;
@@ -97,6 +100,53 @@ class LiveSolveTest {
         var config = config(MeetingPlan.class, EncoderTest.FilteringExistsConstraints.class, Meeting.class);
         MeetingPlan solution = SolverFactory.<MeetingPlan> create(config).buildSolver().solve(MeetingPlan.smallWeek());
         assertEquals(solution.getScore(), rescore(solution, EncoderTest.FilteringExistsConstraints.class));
+    }
+
+    /**
+     * A solver manager solves in the background: the consumers see the solution that ended construction, then
+     * each new best solution, then the final one, whose score equals the last best and what the service scores
+     * it as it stands.
+     */
+    @Test
+    void solverManagersReportBestSolutions() throws Exception {
+        var config = config(MeetingPlan.class, MeetingConstraints.class, Meeting.class);
+        var bests = new java.util.concurrent.CopyOnWriteArrayList<MeetingPlan>();
+        var firsts = new java.util.concurrent.CopyOnWriteArrayList<MeetingPlan>();
+        var finals = new java.util.concurrent.CopyOnWriteArrayList<MeetingPlan>();
+        try (SolverManager<MeetingPlan> manager = SolverManager.create(config)) {
+            var job = manager.solveBuilder().withProblemId(1L).withProblem(MeetingPlan.smallWeek())
+                    .withBestSolutionEventConsumer(event -> bests.add(event.solution()))
+                    .withFirstInitializedSolutionEventConsumer(event -> firsts.add(event.solution()))
+                    .withFinalBestSolutionEventConsumer(event -> finals.add(event.solution())).run();
+            var solution = job.getFinalBestSolution();
+            assertEquals(SolverStatus.NOT_SOLVING, manager.getSolverStatus(1L));
+            assertEquals(1, firsts.size());
+            assertSame(firsts.get(0), bests.get(0));
+            assertEquals(List.of(solution), finals);
+            assertEquals(bests.get(bests.size() - 1).getScore(), solution.getScore());
+            assertEquals(solution.getScore(), rescore(solution, MeetingConstraints.class));
+            assertFalse(job.isTerminatedEarly());
+        }
+    }
+
+    /**
+     * A job without any termination solves until it is ended early, then finishes with the best solution found;
+     * while it runs, a second job with its problem id is refused.
+     */
+    @Test
+    void solverManagerJobsEndEarly() throws Exception {
+        var config = config(MeetingPlan.class, MeetingConstraints.class, Meeting.class).withTerminationConfig(null);
+        try (SolverManager<MeetingPlan> manager = SolverManager.create(config)) {
+            var job = manager.solve("week", MeetingPlan.smallWeek());
+            assertThrows(IllegalStateException.class, () -> manager.solve("week", MeetingPlan.smallWeek()));
+            Thread.sleep(1500);
+            assertEquals(SolverStatus.SOLVING_ACTIVE, manager.getSolverStatus("week"));
+            manager.terminateEarly("week");
+            var solution = job.getFinalBestSolution();
+            assertTrue(job.isTerminatedEarly());
+            solution.getMeetings().forEach(meeting -> assertNotNull(meeting.getSlot()));
+            assertEquals(solution.getScore(), rescore(solution, MeetingConstraints.class));
+        }
     }
 
     /**

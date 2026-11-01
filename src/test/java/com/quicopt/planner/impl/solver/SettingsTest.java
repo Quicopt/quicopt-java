@@ -134,12 +134,12 @@ class SettingsTest {
         threshold.setUnimprovedScoreDifferenceThreshold("0hard/1soft");
         refusedTermination("threshold", threshold);
         var notFalse = assertThrows(IllegalArgumentException.class,
-                () -> SolverSettings.termination(timed().withBestScoreFeasible(false), HardSoftScore.class));
+                () -> SolverSettings.termination(timed().withBestScoreFeasible(false), HardSoftScore.class, false));
         assertEquals(IllegalArgumentException.class, notFalse.getClass());
         assertThrows(IllegalStateException.class,
-                () -> SolverSettings.termination(timed().withBestScoreFeasible(true), SimpleScore.class));
+                () -> SolverSettings.termination(timed().withBestScoreFeasible(true), SimpleScore.class, false));
         var notAScore = assertThrows(IllegalArgumentException.class,
-                () -> SolverSettings.termination(timed().withBestScoreLimit("ten"), HardSoftScore.class));
+                () -> SolverSettings.termination(timed().withBestScoreLimit("ten"), HardSoftScore.class, false));
         assertTrue(notAScore.getMessage().contains("ten"), notAScore.getMessage());
     }
 
@@ -154,7 +154,7 @@ class SettingsTest {
      * Asserts that the termination is refused with a message that names the setting.
      */
     private static void refusedTermination(String name, TerminationConfig termination) {
-        var refusal = assertThrows(Refusal.class, () -> SolverSettings.termination(termination, HardSoftScore.class));
+        var refusal = assertThrows(Refusal.class, () -> SolverSettings.termination(termination, HardSoftScore.class, false));
         assertTrue(refusal.getMessage().contains(name), refusal.getMessage());
     }
 

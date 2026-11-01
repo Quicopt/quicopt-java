@@ -62,6 +62,33 @@ public final class DefaultSolverFactory<Solution_> implements SolverFactory<Solu
     }
 
     /**
+     * @param configOverride settings that replace the configuration's for this job, such as its termination
+     * @return what a background job sends: its settings, which need no time limit, and the model
+     * @throws com.quicopt.planner.impl.encode.Refusal for a termination the service does not run yet
+     */
+    JobSetup jobSetup(SolverConfigOverride configOverride) {
+        var termination = configOverride.getTerminationConfig() != null ? configOverride.getTerminationConfig()
+                : solverConfig.getTerminationConfig();
+        var providerClass = SolverSettings.constraintProviderClass(solverConfig);
+        return new JobSetup(SolverSettings.wire(solverConfig, termination, true), entityClasses, providerClass,
+                recordedConstraints(), PlannerService.configured());
+    }
+
+    /**
+     * What a background job needs to send its problem.
+     *
+     * @param settings the solver settings as the wire carries them
+     * @param entityClasses the configuration's entity classes, which every problem's entities must be of
+     * @param providerClass the constraint provider class
+     * @param constraints the provider's recorded constraints
+     * @param service the planner service to solve on
+     */
+    record JobSetup(com.quicopt.planner.wire.SolverConfig settings, List<Class<?>> entityClasses,
+            Class<? extends com.quicopt.planner.api.score.stream.ConstraintProvider> providerClass,
+            List<RecordedStreams.Node> constraints, PlannerService service) {
+    }
+
+    /**
      * @return the configured model as scoring needs it: the entity classes and the recorded constraints
      */
     Scoring scoring() {

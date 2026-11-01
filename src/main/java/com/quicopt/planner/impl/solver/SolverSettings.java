@@ -152,12 +152,27 @@ final class SolverSettings {
      * @throws Refusal for a termination the service does not run yet
      */
     static com.quicopt.planner.wire.SolverConfig wire(SolverConfig config, TerminationConfig termination) {
+        return wire(config, termination, false);
+    }
+
+    /**
+     * @param config the solver configuration
+     * @param termination the termination to use, the configuration's own or an override
+     * @param background whether the solve runs as a background job, which {@code terminateEarly} can end, so that
+     *        it needs no time limit, nor any termination at all
+     * @return the solver settings as the wire carries them: the environment mode, the seed and the termination
+     * @throws Refusal for a termination the service does not run yet
+     */
+    static com.quicopt.planner.wire.SolverConfig wire(SolverConfig config, TerminationConfig termination,
+            boolean background) {
         var scoreClass = WireEncoder.scoreClass(solutionClass(config));
-        return com.quicopt.planner.wire.SolverConfig.newBuilder()
+        var wire = com.quicopt.planner.wire.SolverConfig.newBuilder()
                 .setEnvironmentMode(EnvironmentMode.valueOf(config.determineEnvironmentMode().name()))
-                .setRandomSeed(seed(config))
-                .setTermination(termination(termination, scoreClass))
-                .build();
+                .setRandomSeed(seed(config));
+        if (!background || termination != null && termination.isConfigured()) {
+            wire.setTermination(termination(termination, scoreClass, background));
+        }
+        return wire.build();
     }
 
     /**
@@ -173,22 +188,23 @@ final class SolverSettings {
 
     /**
      * @param scoreClass the solution's score class, which reads a best score limit
+     * @param background whether the solve runs as a background job, which needs no time limit
      * @return a termination as the wire carries it
-     * @throws Refusal when there is none, or none with a time limit, since a solve on the service must end, and
-     *         for terminations the service does not run yet
+     * @throws Refusal when there is none, or (outside a background job) none with a time limit, since a solve on
+     *         the service must end, and for terminations the service does not run yet
      * @throws IllegalArgumentException for a best score limit that is not a score, and for
      *         {@code bestScoreFeasible} set to false, which means nothing
      * @throws IllegalStateException for {@code bestScoreFeasible} on a score type without a hard level, which can
      *         never be reached
      */
-    static Termination termination(TerminationConfig config, Class<?> scoreClass) {
+    static Termination termination(TerminationConfig config, Class<?> scoreClass, boolean background) {
         if (config == null || !config.isConfigured()) {
             throw new Refusal("a solver without a termination: configure one, such as withTerminationSpentLimit()");
         }
         refuseUnsupported(config);
         var spent = config.calculateTimeMillisSpentLimit();
         var unimproved = config.calculateUnimprovedTimeMillisSpentLimit();
-        if (spent == null && unimproved == null) {
+        if (spent == null && unimproved == null && !background) {
             throw new Refusal("a termination without a time limit: a solve on the service needs a spent limit"
                     + " or an unimproved spent limit");
         }

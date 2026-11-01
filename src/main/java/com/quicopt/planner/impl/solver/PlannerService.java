@@ -62,6 +62,28 @@ final class PlannerService {
     byte[] post(String path, byte[] body) {
         var request = HttpRequest.newBuilder(URI.create(baseUrl + path)).header("Content-Type", CONTENT_TYPE)
                 .header("Accept", CONTENT_TYPE).POST(HttpRequest.BodyPublishers.ofByteArray(body)).build();
+        return send(request);
+    }
+
+    /**
+     * Asks for something and waits for the answer.
+     *
+     * @param path the endpoint with its query, such as {@code /v1/planner/jobs/7/events?after=3}
+     * @return the answer's planner wire bytes
+     * @throws UncheckedIOException when the service cannot be reached
+     * @throws IllegalStateException when the service answers with an HTTP error
+     */
+    byte[] get(String path) {
+        var request = HttpRequest.newBuilder(URI.create(baseUrl + path)).header("Accept", CONTENT_TYPE).GET().build();
+        return send(request);
+    }
+
+    /**
+     * @return the answer's body
+     * @throws UncheckedIOException when the service cannot be reached
+     * @throws IllegalStateException when the service answers with an HTTP error, or the wait is interrupted
+     */
+    private byte[] send(HttpRequest request) {
         HttpResponse<byte[]> response;
         try {
             response = http.send(request, HttpResponse.BodyHandlers.ofByteArray());

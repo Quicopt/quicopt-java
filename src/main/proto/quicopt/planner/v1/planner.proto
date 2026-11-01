@@ -542,3 +542,41 @@ message ScoreResult {
   repeated ConstraintResult constraints = 2;
   Error error = 3;                  // set: scoring failed, nothing else is set
 }
+
+// ---------------------------------------------------------------------------
+// Background solving. POST /v1/planner/jobs with a PlanningProblem starts a
+// job and answers JobStarted. GET /v1/planner/jobs/{id}/events?after=n
+// answers the job's events after the n-th, waiting a few seconds for one
+// when there is none yet. POST /v1/planner/jobs/{id}/terminate ends the
+// job's search early; the job then finishes with the best solution found.
+// ---------------------------------------------------------------------------
+
+// The answer to starting a job.
+message JobStarted {
+  string job_id = 1;
+  Error error = 2;                  // set: no job started
+}
+
+enum JobState {
+  JOB_STATE_UNSPECIFIED = 0;
+  JOB_SOLVING = 1;                  // the job runs
+  JOB_FINISHED = 2;                 // the job ended; its last event is final
+}
+
+// One event of a job, numbered from 1 in the order they happened.
+message JobEvent {
+  uint64 sequence = 1;
+  Solution best_solution = 2;       // a new best solution; when several came
+                                    // between two requests, only the newest
+  bool initialized = 3;             // this best solution ends construction:
+                                    // every entity was assigned
+  SolveResult final_result = 4;     // the job ended: its best solution and
+                                    // stats, or its error
+}
+
+// The answer to an events or terminate request.
+message JobEvents {
+  repeated JobEvent events = 1;
+  JobState state = 2;
+  Error error = 3;                  // set: no job has this id
+}
