@@ -31,6 +31,9 @@ import com.quicopt.planner.testdomain.routes.Courier;
 import com.quicopt.planner.testdomain.routes.RouteConstraints;
 import com.quicopt.planner.testdomain.routes.RoutePlan;
 import com.quicopt.planner.testdomain.routes.Stop;
+import com.quicopt.planner.testdomain.shifts.Shift;
+import com.quicopt.planner.testdomain.shifts.ShiftConstraints;
+import com.quicopt.planner.testdomain.shifts.ShiftPlan;
 import com.quicopt.planner.wire.ScoreResult;
 
 import org.junit.jupiter.api.Test;
@@ -68,6 +71,21 @@ class LiveSolveTest {
         solution.getStops().forEach(stop -> assertNotNull(stop.getCourier()));
         assertFalse(solution.getCouriers().get(0).getStops().isEmpty() && solution.getCouriers().get(1).getStops().isEmpty());
         assertEquals(solution.getScore(), rescore(solution, RouteConstraints.class));
+    }
+
+    /**
+     * Each shift takes a workday and an overtime its own options allow; no overtime at all is best, and the answer
+     * scores what the solve reported.
+     */
+    @Test
+    void shiftsSolveWithinTheirRanges() throws Exception {
+        var config = config(ShiftPlan.class, ShiftConstraints.class, Shift.class);
+        ShiftPlan solution = SolverFactory.<ShiftPlan> create(config).buildSolver().solve(ShiftPlan.twoShifts());
+        var workdays = ShiftPlan.twoShifts().workdays();
+        solution.getShifts().forEach(shift -> assertTrue(workdays.contains(shift.getDay())));
+        solution.getShifts().forEach(shift -> assertEquals(0, shift.getOvertime()));
+        assertEquals(HardSoftScore.ZERO, solution.getScore());
+        assertEquals(solution.getScore(), rescore(solution, ShiftConstraints.class));
     }
 
     /**

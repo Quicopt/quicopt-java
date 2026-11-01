@@ -7,15 +7,23 @@ import static org.junit.jupiter.api.Assertions.assertNotSame;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 
+import java.time.LocalDate;
 import java.util.List;
 
 import com.quicopt.planner.api.score.HardSoftScore;
+import com.quicopt.planner.impl.encode.ProblemTables;
+import com.quicopt.planner.impl.encode.Type;
+import com.quicopt.planner.impl.encode.WireEncoder;
+import com.quicopt.planner.impl.score.stream.RecordedStreams;
 import com.quicopt.planner.testdomain.meetings.MeetingPlan;
 import com.quicopt.planner.testdomain.routes.RoutePlan;
+import com.quicopt.planner.testdomain.shifts.ShiftConstraints;
+import com.quicopt.planner.testdomain.shifts.ShiftPlan;
 import com.quicopt.planner.wire.ListVariableValues;
 import com.quicopt.planner.wire.LongList;
 import com.quicopt.planner.wire.Score;
 import com.quicopt.planner.wire.Solution;
+import com.quicopt.planner.wire.SolverConfig;
 import com.quicopt.planner.wire.VariableValues;
 
 import org.junit.jupiter.api.Test;
@@ -38,7 +46,7 @@ class WriteBackTest {
                 .addVariables(VariableValues.newBuilder().setClassId(2).setVariable(1)
                         .addAllValues(List.of(0L, 1L, 2L, 3L, 4L, 5L, 0L, 1L)))
                 .setScore(Score.newBuilder().addLevels(0).addLevels(-3)).build();
-        SolutionWriter.write(solution, answer, HardSoftScore.class);
+        SolutionWriter.write(solution, answer, HardSoftScore.class, new ProblemTables(problem));
         assertNotSame(problem.getMeetings().get(0), solution.getMeetings().get(0));
         assertSame(problem.getRooms().get(1), solution.getMeetings().get(1).getRoom());
         assertSame(problem.getSlots().get(5), solution.getMeetings().get(5).getSlot());
@@ -60,7 +68,7 @@ class WriteBackTest {
                         .addLists(LongList.newBuilder().addAllValues(List.of(0L, 1L)))
                         .addLists(LongList.newBuilder().addAllValues(List.of(5L))))
                 .setScore(Score.newBuilder().addLevels(0).addLevels(-60)).build();
-        SolutionWriter.write(solution, answer, HardSoftScore.class);
+        SolutionWriter.write(solution, answer, HardSoftScore.class, new ProblemTables(problem));
         var first = solution.getCouriers().get(0);
         var stops = solution.getStops();
         assertEquals(List.of(stops.get(0), stops.get(1)), first.getStops());
@@ -73,5 +81,30 @@ class WriteBackTest {
         assertNull(stops.get(2).getArrivalTime());
         assertNotSame(problem.getStops().get(0), stops.get(0));
         assertEquals(List.of(), problem.getCouriers().get(0).getStops());
+    }
+
+    /**
+     * Variables whose values are dates and numbers get the values they were sent with: the answer's day numbers
+     * become the plan's dates, and the null encoding leaves a shift's overtime unassigned.
+     */
+    @Test
+    void datesAndNumbersGoIntoAClone() {
+        var problem = ShiftPlan.twoShifts();
+        var sent = new ProblemTables(problem);
+        new WireEncoder(sent, ShiftConstraints.class.getClassLoader())
+                .encode(RecordedStreams.record(ShiftConstraints.class), SolverConfig.getDefaultInstance());
+        var solution = PlanningCloner.clone(problem);
+        var wednesday = LocalDate.of(2026, 11, 4);
+        var answer = Solution.newBuilder()
+                .addVariables(VariableValues.newBuilder().setClassId(0).setVariable(0)
+                        .addAllValues(List.of(wednesday.toEpochDay(), wednesday.toEpochDay() + 2)))
+                .addVariables(VariableValues.newBuilder().setClassId(0).setVariable(1)
+                        .addAllValues(List.of(2L, Type.NULL_LONG)))
+                .setScore(Score.newBuilder().addLevels(0).addLevels(-4)).build();
+        SolutionWriter.write(solution, answer, HardSoftScore.class, sent);
+        assertEquals(wednesday, solution.getShifts().get(0).getDay());
+        assertEquals(wednesday.plusDays(2), solution.getShifts().get(1).getDay());
+        assertEquals(2, solution.getShifts().get(0).getOvertime());
+        assertNull(solution.getShifts().get(1).getOvertime());
     }
 }

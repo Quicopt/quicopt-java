@@ -831,7 +831,7 @@ final class Lifter implements Opcodes {
         var field = findField(owner.type, insn.name);
         var variable = tables.variable(owner, field);
         if (variable != null) {
-            var value = Type.ref(variable.valueClass());
+            var value = variable.type();
             return variable.list()
                     ? ir.add("list_variable", List.of(object.node()), Type.list(value), owner.id, variable.index(), 0)
                     : ir.add("variable", List.of(object.node()), value, owner.id, variable.index(), 0);

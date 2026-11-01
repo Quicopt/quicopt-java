@@ -391,7 +391,7 @@ public final class WireEncoder {
         if (variable != null) {
             wire.addSteps(member(variable.list() ? MemberKind.LIST_VARIABLE : MemberKind.VARIABLE, at,
                     variable.index()));
-            return variable.list() ? Type.list(Type.ref(variable.valueClass())) : Type.ref(variable.valueClass());
+            return variable.list() ? Type.list(variable.type()) : variable.type();
         }
         var column = tables.column(at, field);
         wire.addSteps(member(MemberKind.COLUMN, at, column.index()));
@@ -406,17 +406,19 @@ public final class WireEncoder {
     }
 
     /**
-     * @return the list variable with its current lists; its value range is every row of its element class
+     * @return the list variable with its current lists and the elements its value range providers give
+     * @throws Refusal for a value range provider on the entity class, which gives each list its own elements
      */
     private ListVariable listVariable(ClassInfo owner, ProblemTables.VariableInfo variable) {
         var elements = variable.valueClass();
         var wire = ListVariable.newBuilder().setName(variable.field().getName()).setElementClass(elements.id)
                 .setAllowsUnassignedValues(variable.allowsUnassigned());
-        var range = ValueRange.newBuilder();
-        for (int row = 0; row < elements.rows.size(); row++) {
-            range.addValues(row);
+        var values = ValueRanges.of(tables, owner, variable);
+        if (values.shared() == null) {
+            throw new Refusal("the list variable " + owner.type.getSimpleName() + "." + variable.field().getName()
+                    + ", whose value range provider is on the entity class");
         }
-        wire.setRange(range);
+        wire.setRange(range(owner, variable, values.shared()));
         var elementType = Type.ref(elements);
         for (Object row : owner.rows) {
             var list = LongList.newBuilder();
@@ -457,20 +459,43 @@ public final class WireEncoder {
     }
 
     /**
-     * @return one basic planning variable with its current values; its value range is every row of its value class
+     * @return one basic planning variable with its current values and the values its value range providers give,
+     *         shared by every entity or one range per entity
      */
     private Variable variable(ClassInfo owner, ProblemTables.VariableInfo variable) {
-        var valueType = Type.ref(variable.valueClass());
-        var range = ValueRange.newBuilder();
-        for (int row = 0; row < variable.valueClass().rows.size(); row++) {
-            range.addValues(row);
+        var wire = Variable.newBuilder().setName(variable.field().getName())
+                .setValueType(valueType(variable.type())).setAllowsUnassigned(variable.allowsUnassigned());
+        var values = ValueRanges.of(tables, owner, variable);
+        if (values.shared() != null) {
+            wire.setRange(range(owner, variable, values.shared()));
+        } else {
+            values.perEntity().forEach(entityValues -> wire.addEntityRanges(range(owner, variable, entityValues)));
         }
-        var wire = Variable.newBuilder().setName(variable.field().getName()).setValueType(valueType(valueType))
-                .setRange(range).setAllowsUnassigned(variable.allowsUnassigned());
         for (Object row : owner.rows) {
-            wire.addInitial(tables.encode(valueType, Members.read(variable.field(), row)));
+            wire.addInitial(tables.encodeVariableValue(variable, Members.read(variable.field(), row)));
         }
         return wire.build();
+    }
+
+    /**
+     * @return a variable's values, encoded
+     * @throws Refusal for a null value, or a value that is not a row of the variable's value class
+     */
+    private ValueRange range(ClassInfo owner, ProblemTables.VariableInfo variable, List<Object> values) {
+        var range = ValueRange.newBuilder();
+        for (Object value : values) {
+            if (value == null) {
+                throw new Refusal("a null in the value range of " + owner.type.getSimpleName() + "."
+                        + variable.field().getName());
+            }
+            try {
+                range.addValues(tables.encodeVariableValue(variable, value));
+            } catch (IllegalStateException notARow) {
+                throw new Refusal("a value in the range of " + owner.type.getSimpleName() + "."
+                        + variable.field().getName() + " that no collection of the solution holds: " + value);
+            }
+        }
+        return range.build();
     }
 
     /**

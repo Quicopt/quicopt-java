@@ -166,12 +166,15 @@ public final class ProblemTables {
      *
      * @param index its index among its class's variables
      * @param field the field that holds it
-     * @param valueClass the table whose rows are its values
+     * @param type the type of its values (for a list variable: of its elements)
+     * @param valueClass the table whose rows are its values, or {@code null} for values of a scalar type, such as
+     *        numbers or dates
      * @param list whether it is a list variable
      * @param allowsUnassigned whether it may stay unassigned (for a list variable: whether values may stay out of
      *        every list)
      */
-    public record VariableInfo(int index, Field field, ClassInfo valueClass, boolean list, boolean allowsUnassigned) {
+    public record VariableInfo(int index, Field field, Type type, ClassInfo valueClass, boolean list,
+            boolean allowsUnassigned) {
     }
 
     /**
@@ -231,6 +234,8 @@ public final class ProblemTables {
     }
 
     final Class<?> solutionClass;
+    /** The solution the tables were read from, or {@code null} for loose objects. */
+    final Object solution;
     /** Whether shadow variables are read as the objects hold them, like other fields, instead of being computed. */
     final boolean shadowsAsData;
     /** The offset that every {@code OffsetDateTime} of the problem has, once one was encoded. */
@@ -245,6 +250,8 @@ public final class ProblemTables {
     private final Map<String, Long> stringIds = new HashMap<>();
     private final Map<ClassInfo, Boolean> identityEquality = new HashMap<>();
     private final Map<Class<?>, java.util.Optional<Class<?>>> reachedEntities = new HashMap<>();
+    /** For each scalar variable's field, the values it was sent with, by their encoding. */
+    private final Map<Field, Map<Long, Object>> scalarValues = new HashMap<>();
 
     /**
      * Tables for solving: the solution's annotated collections, then the entity classes' genuine and shadow
@@ -253,7 +260,7 @@ public final class ProblemTables {
      * @param solution an instance of the class with the {@code PlanningSolution} annotation
      */
     public ProblemTables(Object solution) {
-        this(solution.getClass(), declared(solution), false, false, null);
+        this(solution.getClass(), solution, declared(solution), false, false, null);
     }
 
     /**
@@ -264,7 +271,7 @@ public final class ProblemTables {
      * @return the tables
      */
     public static ProblemTables asItStands(Object solution) {
-        return new ProblemTables(solution.getClass(), declared(solution), true, false, null);
+        return new ProblemTables(solution.getClass(), solution, declared(solution), true, false, null);
     }
 
     /**
@@ -277,7 +284,7 @@ public final class ProblemTables {
      * @return the tables
      */
     public static ProblemTables ofObjects(Class<?> solutionClass, List<?> objects) {
-        return new ProblemTables(solutionClass, declared(solutionClass, objects), true, true, objects);
+        return new ProblemTables(solutionClass, null, declared(solutionClass, objects), true, true, objects);
     }
 
     /**
@@ -289,15 +296,16 @@ public final class ProblemTables {
      * @return the tables
      */
     public static ProblemTables forShadowsOf(Class<?> solutionClass, List<?> objects) {
-        return new ProblemTables(solutionClass, declared(solutionClass, objects), false, true, null);
+        return new ProblemTables(solutionClass, null, declared(solutionClass, objects), false, true, null);
     }
 
     /**
      * Reads the declared collections into tables, then the entity classes' variables.
      */
-    private ProblemTables(Class<?> solutionClass, List<Declared> declared, boolean shadowsAsData, boolean loose,
-            List<?> given) {
+    private ProblemTables(Class<?> solutionClass, Object solution, List<Declared> declared, boolean shadowsAsData,
+            boolean loose, List<?> given) {
         this.solutionClass = solutionClass;
+        this.solution = solution;
         this.shadowsAsData = shadowsAsData;
         this.loose = loose;
         if (given == null) {
@@ -483,7 +491,7 @@ public final class ProblemTables {
     /**
      * @return the type of a primitive, boxed, temporal, decimal, string or enum class, or {@code null} for others
      */
-    private static Type scalarType(Class<?> type) {
+    static Type scalarType(Class<?> type) {
         if (type == boolean.class || type == Boolean.class) {
             return Type.BOOL;
         }
@@ -522,6 +530,41 @@ public final class ProblemTables {
      */
     VariableInfo variable(ClassInfo owner, Field field) {
         return owner.variables.stream().filter(v -> v.field().equals(field)).findFirst().orElse(null);
+    }
+
+    /**
+     * @return whether the tables are for solving a solution, which needs the variables' value ranges; scoring
+     *         needs none
+     */
+    boolean forSolving() {
+        return solution != null && !shadowsAsData;
+    }
+
+    /**
+     * Encodes a value of a variable, and remembers it when the variable is scalar, so that {@link #variableValue}
+     * can turn the encoding back into it.
+     *
+     * @return the value's encoding
+     */
+    long encodeVariableValue(VariableInfo variable, Object value) {
+        long encoded = encode(variable.type(), value);
+        if (variable.valueClass() == null && value != null) {
+            scalarValues.computeIfAbsent(variable.field(), f -> new HashMap<>()).putIfAbsent(encoded, value);
+        }
+        return encoded;
+    }
+
+    /**
+     * @param variable the variable, of these tables or of other tables read from a copy of the same solution
+     * @return the value of a scalar variable that was sent with the given encoding
+     * @throws IllegalStateException when no value was sent with it
+     */
+    public Object variableValue(VariableInfo variable, long encoded) {
+        var value = scalarValues.getOrDefault(variable.field(), Map.of()).get(encoded);
+        if (value == null) {
+            throw new IllegalStateException("No value of " + variable.field().getName() + " was sent as " + encoded);
+        }
+        return value;
     }
 
     /**

@@ -38,14 +38,20 @@ final class Variables {
         var fields = Members.sortedFields(info.type);
         for (Field field : fields) {
             if (field.getAnnotation(PlanningVariable.class) instanceof PlanningVariable basic) {
-                var values = tables.requireClass(field.getType(), "the planning variable " + field.getName());
-                info.variables.add(new ProblemTables.VariableInfo(info.variables.size(), field, values, false,
-                        basic.allowsUnassigned()));
+                var scalar = ProblemTables.scalarType(field.getType());
+                if (scalar != null && !scalar.isNumberEncoded()) {
+                    throw new Refusal("the planning variable " + field.getName() + " of type "
+                            + field.getType().getSimpleName() + ", whose values the service cannot take");
+                }
+                var values = scalar != null ? null
+                        : tables.requireClass(field.getType(), "the planning variable " + field.getName());
+                info.variables.add(new ProblemTables.VariableInfo(info.variables.size(), field,
+                        scalar != null ? scalar : Type.ref(values), values, false, basic.allowsUnassigned()));
             } else if (field.getAnnotation(PlanningListVariable.class) instanceof PlanningListVariable list) {
                 var values = tables.requireClass(Members.elementClass(field.getGenericType()),
                         "the elements of the list variable " + field.getName());
-                info.variables.add(new ProblemTables.VariableInfo(info.variables.size(), field, values, true,
-                        list.allowsUnassignedValues()));
+                info.variables.add(new ProblemTables.VariableInfo(info.variables.size(), field, Type.ref(values),
+                        values, true, list.allowsUnassignedValues()));
             }
         }
         for (Field field : fields) {

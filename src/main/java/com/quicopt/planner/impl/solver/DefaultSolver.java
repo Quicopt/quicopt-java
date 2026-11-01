@@ -76,7 +76,7 @@ final class DefaultSolver<Solution_> implements Solver<Solution_> {
                 throw PlannerService.failure(result.getError());
             }
             var solution = PlanningCloner.clone(problem);
-            SolutionWriter.write(solution, result.getSolution(), scoreClass);
+            SolutionWriter.write(solution, result.getSolution(), scoreClass, tables);
             return solution;
         } catch (InvalidProtocolBufferException e) {
             throw new IllegalStateException("The planner service's answer is not a solve result.", e);

@@ -6,6 +6,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.time.LocalDate;
 import java.util.List;
 import java.util.concurrent.ThreadLocalRandom;
 
@@ -24,6 +25,8 @@ import com.quicopt.planner.testdomain.meetings.MeetingPlan;
 import com.quicopt.planner.testdomain.meetings.Room;
 import com.quicopt.planner.testdomain.routes.RouteConstraints;
 import com.quicopt.planner.testdomain.routes.RoutePlan;
+import com.quicopt.planner.testdomain.shifts.ShiftConstraints;
+import com.quicopt.planner.testdomain.shifts.ShiftPlan;
 import com.quicopt.planner.wire.ClassDecl;
 import com.quicopt.planner.wire.Expression;
 import com.quicopt.planner.wire.PlanningProblem;
@@ -307,6 +310,25 @@ class EncoderTest {
                             .asConstraint("Lonely meeting")
             };
         }
+    }
+
+    /**
+     * A variable takes the values of its value range providers: the shift's day those of the plan's workdays, one
+     * range for every shift, and its overtime those of the shift's own options, one range per shift.
+     */
+    @Test
+    void valueRangesComeFromTheirProviders() {
+        var problem = encode(ShiftPlan.twoShifts(), ShiftConstraints.class);
+        var shift = problem.getClasses(classId(problem, "Shift"));
+        var day = shift.getVariables(0);
+        var overtime = shift.getVariables(1);
+        assertEquals("day", day.getName());
+        long monday = LocalDate.of(2026, 11, 2).toEpochDay();
+        assertEquals(List.of(monday, monday + 1, monday + 2, monday + 3, monday + 4), day.getRange().getValuesList());
+        assertEquals(0, day.getEntityRangesCount());
+        assertEquals("overtime", overtime.getName());
+        assertEquals(List.of(List.of(0L, 1L, 2L), List.of(0L)),
+                overtime.getEntityRangesList().stream().map(r -> r.getValuesList()).toList());
     }
 
     /**
