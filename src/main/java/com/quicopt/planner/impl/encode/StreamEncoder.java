@@ -373,6 +373,10 @@ final class StreamEncoder {
         var result = new ArrayList<Joiner>();
         for (int i = 0; i < keyed.getJoinerCount(); i++) {
             var type = JoinerType.valueOf(keyed.getJoinerType(i).name());
+            if (COLLECTION_JOINERS.contains(type)) {
+                result.add(collectionJoiner(type, leftMapping(joiner, i), keyed.getRightMapping(i), left, right));
+                continue;
+            }
             var leftKey = lifter.lift(leftMapping(joiner, i), left);
             var rightKey = lifter.lift(keyed.getRightMapping(i), right);
             if (type == JoinerType.EQUAL) {
@@ -381,6 +385,29 @@ final class StreamEncoder {
             result.add(Joiner.newBuilder().setJoinerType(type).setLeft(leftKey.node()).setRight(rightKey.node()).build());
         }
         return result;
+    }
+
+    /** The joiners that compare a collection with an element or another collection. */
+    private static final java.util.Set<JoinerType> COLLECTION_JOINERS = java.util.EnumSet.of(JoinerType.CONTAINING,
+            JoinerType.CONTAINED_IN, JoinerType.CONTAINING_ANY_OF);
+
+    /**
+     * A joiner that compares a collection with an element or another collection, sent as a filtering joiner over
+     * the joined tuple: {@code containing} as the left collection containing the right element,
+     * {@code containedIn} as the reverse, {@code containingAnyOf} as the two collections sharing an element.
+     *
+     * @return the filtering joiner
+     */
+    private Joiner collectionJoiner(JoinerType type, Object leftMapping, Object rightMapping, List<Type> left,
+            List<Type> right) {
+        var leftValue = lifter.lift(leftMapping, left);
+        var rightValue = lifter.lift(rightMapping, right, left.size());
+        var test = switch (type) {
+            case CONTAINING -> ir.apply("contains", Type.BOOL, leftValue, rightValue);
+            case CONTAINED_IN -> ir.apply("contains", Type.BOOL, rightValue, leftValue);
+            default -> ir.apply("contains_any", Type.BOOL, leftValue, rightValue);
+        };
+        return Joiner.newBuilder().setJoinerType(JoinerType.FILTERING).setFilter(test.node()).build();
     }
 
     /**

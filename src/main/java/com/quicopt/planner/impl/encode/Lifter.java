@@ -118,12 +118,24 @@ final class Lifter implements Opcodes {
      * @throws Refusal naming the source line when some construct has no translation
      */
     Val lift(Object lambda, List<Type> tuple) {
+        return lift(lambda, tuple, 0);
+    }
+
+    /**
+     * Translates a function applied to the elements of a longer tuple from position {@code first} on, such as a
+     * joiner's right-hand function inside the joined tuple.
+     *
+     * @return the function's value as an expression
+     * @throws Refusal naming the source line when some construct has no translation
+     */
+    Val lift(Object lambda, List<Type> tuple, int first) {
         depth = 0;
         location = "?";
         var elements = new ArrayList<Val>();
         for (int position = 0; position < tuple.size(); position++) {
             var type = tuple.get(position);
-            elements.add(ir.add("arg", List.of(), type, type.refClass() == null ? 0 : type.refClass().id, position, 0));
+            elements.add(ir.add("arg", List.of(), type, type.refClass() == null ? 0 : type.refClass().id,
+                    first + position, 0));
         }
         var known = knownLambdas.translate(lambda, elements, ir);
         if (known != null) {

@@ -124,6 +124,7 @@ seconds with truncation.
 | Op | Operands | Result | Java |
 |---|---|---|---|
 | `contains` | LIST of E, E | B | `Collection.contains`, by encoding equality; fails on a null list |
+| `contains_any` | LIST of E, LIST of E | B | `!Collections.disjoint(a, b)`: whether the lists share an element, by encoding equality; fails on a null list |
 | `size` | LIST | I | `Collection.size()`; fails on a null list |
 | `get` | LIST of E, I | E | `List.get(i)`; fails on a null list or an index out of bounds |
 
