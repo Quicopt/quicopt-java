@@ -240,6 +240,36 @@ class EncoderTest {
     }
 
     /**
+     * Scored as they stand, a route's stops count as visited by their courier field: {@code forEach(Stop)} goes out
+     * as every stop, filtered on that field. A solve keeps {@code forEach}, which the service answers from the
+     * lists it computes the field from.
+     */
+    @Test
+    void stopsAsTheyStandCountByTheirCourier() {
+        var plan = RoutePlan.smallTown();
+        var asItStands = new WireEncoder(ProblemTables.asItStands(plan), RouteConstraints.class.getClassLoader())
+                .encode(RecordedStreams.record(RouteConstraints.class), SolverConfig.getDefaultInstance());
+        var solving = new WireEncoder(new ProblemTables(plan), RouteConstraints.class.getClassLoader())
+                .encode(RecordedStreams.record(RouteConstraints.class), SolverConfig.getDefaultInstance());
+        int stopClass = classId(asItStands, "Stop");
+        var streams = asItStands.getStreamsList();
+        assertTrue(streams.stream().noneMatch(s -> s.getKind() == StreamKind.FOR_EACH && s.getClassId() == stopClass));
+        int all = streams.indexOf(streams.stream().filter(s -> s.getKind() == StreamKind.FOR_EACH_INCLUDING_UNASSIGNED
+                && s.getClassId() == stopClass).findFirst().orElseThrow());
+        assertTrue(streams.stream().anyMatch(s -> s.getKind() == StreamKind.FILTER && s.getInput() == all));
+        assertTrue(solving.getStreamsList().stream()
+                .anyMatch(s -> s.getKind() == StreamKind.FOR_EACH && s.getClassId() == classId(solving, "Stop")));
+    }
+
+    /**
+     * @return the id of the class with the given simple name in an encoded problem
+     */
+    private static int classId(PlanningProblem problem, String name) {
+        var classes = problem.getClassesList();
+        return classes.indexOf(classes.stream().filter(c -> c.getName().equals(name)).findFirst().orElseThrow());
+    }
+
+    /**
      * A constraint whose filter is random, which no solver could score.
      */
     public static class RandomConstraints implements ConstraintProvider {

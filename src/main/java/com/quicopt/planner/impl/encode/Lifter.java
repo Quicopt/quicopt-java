@@ -148,6 +148,16 @@ final class Lifter implements Opcodes {
     }
 
     /**
+     * @return a predicate on a tuple of one object of {@code owner}: whether the object's field holds a value
+     */
+    Val isSet(ProblemTables.ClassInfo owner, java.lang.reflect.Field field) {
+        var object = ir.add("arg", List.of(), Type.ref(owner), owner.id, 0, 0);
+        var column = tables.column(owner, field);
+        var value = ir.add("column", List.of(object.node()), column.type(), owner.id, column.index(), 0);
+        return ir.apply("ne", Type.BOOL, value, ir.nullOf(value.type()));
+    }
+
+    /**
      * @return a translated function's value, once it is checked to be something the wire can carry
      * @throws Refusal for an object the lifter knows, which is neither a planning object nor a value, and for a
      *         {@code compareTo} result used as a number

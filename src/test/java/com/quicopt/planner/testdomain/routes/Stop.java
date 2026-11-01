@@ -99,6 +99,16 @@ public class Stop {
     }
 
     /**
+     * Sets the courier by hand, as a constraint test does: the solver API counts a stop as visited when this field
+     * holds a courier, whichever list holds the stop.
+     *
+     * @param courier the courier who visits this stop, or null
+     */
+    public void setCourier(Courier courier) {
+        this.courier = courier;
+    }
+
+    /**
      * @return the stop the courier visits right before this one, or null
      */
     public Stop getPrevious() {

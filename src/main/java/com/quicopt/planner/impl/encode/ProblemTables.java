@@ -27,6 +27,7 @@ import java.util.stream.IntStream;
 import com.quicopt.planner.api.domain.common.PlanningId;
 import com.quicopt.planner.api.domain.solution.PlanningEntityCollectionProperty;
 import com.quicopt.planner.api.domain.solution.ProblemFactCollectionProperty;
+import com.quicopt.planner.api.domain.variable.InverseRelationShadowVariable;
 
 /**
  * A planning problem seen as tables: one table per entity or fact class, one row per object. Classes come from the
@@ -424,6 +425,22 @@ public final class ProblemTables {
      */
     VariableInfo variable(ClassInfo owner, Field field) {
         return owner.variables.stream().filter(v -> v.field().equals(field)).findFirst().orElse(null);
+    }
+
+    /**
+     * The field of a list variable's element that holds its inverse relation, the entity whose list holds it.
+     *
+     * @return the field, or {@code null} when no list variable holds the class's objects or the class declares no
+     *         inverse relation
+     */
+    Field listInverseField(ClassInfo info) {
+        boolean element = classes.stream().flatMap(c -> c.variables.stream())
+                .anyMatch(v -> v.list() && v.valueClass() == info);
+        if (!element) {
+            return null;
+        }
+        return Members.sortedFields(info.type).stream()
+                .filter(f -> f.isAnnotationPresent(InverseRelationShadowVariable.class)).findFirst().orElse(null);
     }
 
     /**

@@ -125,13 +125,30 @@ final class StreamEncoder {
     }
 
     /**
-     * @return the root over a class: one per class and filtering
+     * The root over a class, one per class and filtering. Scored as they stand, the elements of a list variable
+     * count as assigned when their inverse relation field holds an entity, as the solver API decides it for
+     * {@code forEach}, whichever list holds them; the service decides by the lists, which agree with that field
+     * whenever it computes it.
+     *
+     * @return the root's stream id
      */
     private int root(Class<?> type, boolean filtered) {
         var info = classInfo(type);
-        return roots.computeIfAbsent(info.id + (filtered ? ":assigned" : ":all"), key -> add(StreamNode.newBuilder()
-                .setKind(filtered ? StreamKind.FOR_EACH : StreamKind.FOR_EACH_INCLUDING_UNASSIGNED)
-                .setClassId(info.id), List.of(Type.ref(info))));
+        var inverse = filtered && tables.shadowsAsData ? tables.listInverseField(info) : null;
+        if (inverse == null) {
+            return roots.computeIfAbsent(info.id + (filtered ? ":assigned" : ":all"), key -> add(StreamNode
+                    .newBuilder().setKind(filtered ? StreamKind.FOR_EACH : StreamKind.FOR_EACH_INCLUDING_UNASSIGNED)
+                    .setClassId(info.id), List.of(Type.ref(info))));
+        }
+        var known = roots.get(info.id + ":inverse");
+        if (known != null) {
+            return known;
+        }
+        int all = root(type, false);
+        int id = add(StreamNode.newBuilder().setKind(StreamKind.FILTER).setInput(all)
+                .setPredicate(lifter.isSet(info, inverse).node()), tuples.get(all));
+        roots.put(info.id + ":inverse", id);
+        return id;
     }
 
     /**

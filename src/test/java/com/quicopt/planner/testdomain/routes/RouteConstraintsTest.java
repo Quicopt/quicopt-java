@@ -27,8 +27,34 @@ class RouteConstraintsTest {
         var courier = new Courier(0, 0, 0, 480);
         var stop = new Stop(0, 2, 3, 540);
         courier.getStops().add(stop);
+        stop.setCourier(courier);
         stop.setArrivalTime(570);
         verifier.verifyThat(RouteConstraints::lateArrival).given(courier, stop).penalizesBy(30);
+    }
+
+    /**
+     * A stop counts as visited when its courier field is set, as the solver API decides it, even when no list holds
+     * it: tests often set only that field.
+     */
+    @Test
+    void aStopCountsByItsCourier() {
+        var courier = new Courier(0, 0, 0, 480);
+        var stop = new Stop(0, 2, 3, 540);
+        stop.setCourier(courier);
+        stop.setArrivalTime(570);
+        verifier.verifyThat(RouteConstraints::lateArrival).given(courier, stop).penalizesBy(30);
+    }
+
+    /**
+     * A stop without its courier field set counts as not visited, even when a courier's list holds it.
+     */
+    @Test
+    void aStopWithoutItsCourierDoesNotCount() {
+        var courier = new Courier(0, 0, 0, 480);
+        var stop = new Stop(0, 2, 3, 540);
+        courier.getStops().add(stop);
+        stop.setArrivalTime(570);
+        verifier.verifyThat(RouteConstraints::lateArrival).given(courier, stop).hasNoImpact();
     }
 
     /**
@@ -39,13 +65,14 @@ class RouteConstraintsTest {
     void settingAllShadowVariablesComputesArrivals() {
         var plan = RoutePlan.smallTown();
         var stop = plan.getStops().get(0);
-        plan.getCouriers().get(0).getStops().add(stop);
+        var courier = plan.getCouriers().get(0);
+        courier.getStops().add(stop);
+        stop.setCourier(courier);
         stop.setArrivalTime(570);
         verifier.verifyThat(RouteConstraints::lateArrival).givenSolution(plan).penalizesBy(30);
         verifier.verifyThat(RouteConstraints::lateArrival).givenSolution(plan).settingAllShadowVariables()
                 .hasNoImpact();
         assertEquals(485, stop.getArrivalTime());
-        assertEquals(plan.getCouriers().get(0), stop.getCourier());
     }
 
     /**
