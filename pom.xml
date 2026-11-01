@@ -24,6 +24,11 @@
     <version.jaxb-api>4.0.5</version.jaxb-api>
     <version.jaxb-runtime>4.0.9</version.jaxb-runtime>
     <version.slf4j>2.0.17</version.slf4j>
+    <version.protobuf>4.36.2</version.protobuf>
+    <version.asm>9.11.1</version.asm>
+    <!-- The planner service the tests use: one on this machine, unless -Dquicopt.baseUrl names another, so that no
+         test run reaches the public service by default. -->
+    <quicopt.baseUrl>http://127.0.0.1:8199</quicopt.baseUrl>
     <version.junit>6.1.3</version.junit>
   </properties>
 
@@ -51,6 +56,18 @@
       <groupId>org.slf4j</groupId>
       <artifactId>slf4j-api</artifactId>
       <version>${version.slf4j}</version>
+    </dependency>
+    <!-- The planner wire's messages, generated from src/main/proto. -->
+    <dependency>
+      <groupId>com.google.protobuf</groupId>
+      <artifactId>protobuf-java</artifactId>
+      <version>${version.protobuf}</version>
+    </dependency>
+    <!-- Bytecode reading, to translate the functions a model passes to its constraint streams. -->
+    <dependency>
+      <groupId>org.ow2.asm</groupId>
+      <artifactId>asm-tree</artifactId>
+      <version>${version.asm}</version>
     </dependency>
     <dependency>
       <groupId>org.junit.jupiter</groupId>
@@ -83,12 +100,32 @@
         </executions>
       </plugin>
       <plugin>
+        <groupId>io.github.ascopes</groupId>
+        <artifactId>protobuf-maven-plugin</artifactId>
+        <version>5.1.11</version>
+        <configuration>
+          <protoc>${version.protobuf}</protoc>
+        </configuration>
+        <executions>
+          <execution>
+            <goals>
+              <goal>generate</goal>
+            </goals>
+          </execution>
+        </executions>
+      </plugin>
+      <plugin>
         <artifactId>maven-compiler-plugin</artifactId>
         <version>3.14.1</version>
       </plugin>
       <plugin>
         <artifactId>maven-surefire-plugin</artifactId>
         <version>3.5.4</version>
+        <configuration>
+          <systemPropertyVariables>
+            <quicopt.baseUrl>${quicopt.baseUrl}</quicopt.baseUrl>
+          </systemPropertyVariables>
+        </configuration>
       </plugin>
       <!-- LICENSE and NOTICE go into every jar. -->
       <plugin>

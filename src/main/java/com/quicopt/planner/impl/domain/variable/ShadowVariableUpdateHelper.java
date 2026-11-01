@@ -2,6 +2,8 @@
 // SPDX-FileCopyrightText: (c) 2026 Tim Bode, PGI-12, Forschungszentrum Jülich
 package com.quicopt.planner.impl.domain.variable;
 
+import com.quicopt.planner.impl.solver.Scoring;
+
 /**
  * Brings shadow variables up to date by calling the domain's own methods, as
  * {@code SolutionManager.updateShadowVariables} asks.
@@ -24,26 +26,21 @@ public final class ShadowVariableUpdateHelper<Solution_> {
     }
 
     /**
+     * Updates the shadow variables of loose objects in place, by the domain's own methods.
+     *
      * @param solutionClass the class with the {@code PlanningSolution} annotation
-     * @param entities the entities and facts whose shadow variables to update
-     * @throws UnsupportedOperationException always, until shadow variables are implemented
+     * @param entities the entities and facts whose shadow variables to update, with the objects they refer to
      */
     public void updateShadowVariables(Class<Solution_> solutionClass, Object... entities) {
-        throw notYet();
+        Scoring.updateShadows(solutionClass, java.util.Arrays.asList(entities));
     }
 
     /**
+     * Updates every shadow variable of the solution in place, by the domain's own methods.
+     *
      * @param solution the solution whose shadow variables to update
-     * @throws UnsupportedOperationException always, until shadow variables are implemented
      */
     public void updateShadowVariables(Solution_ solution) {
-        throw notYet();
-    }
-
-    /**
-     * @return the exception that every updating method throws until shadow variables are implemented
-     */
-    private static UnsupportedOperationException notYet() {
-        return new UnsupportedOperationException("Updating shadow variables is not implemented yet.");
+        Scoring.updateShadows(solution);
     }
 }

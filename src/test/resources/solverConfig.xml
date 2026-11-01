@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- A solver configuration as a user's file declares it, in a namespace of its own. -->
+<solver xmlns="https://example.com/xsd/solver" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+  <environmentMode>FULL_ASSERT</environmentMode>
+  <randomSeed>7</randomSeed>
+  <solutionClass>com.quicopt.planner.testdomain.meetings.MeetingPlan</solutionClass>
+  <entityClass>com.quicopt.planner.testdomain.meetings.Meeting</entityClass>
+  <scoreDirectorFactory>
+    <constraintProviderClass>com.quicopt.planner.testdomain.meetings.TunedMeetingConstraints</constraintProviderClass>
+    <constraintProviderCustomProperties>
+      <property name="roomPenalty" value="3"/>
+    </constraintProviderCustomProperties>
+  </scoreDirectorFactory>
+  <termination>
+    <secondsSpentLimit>2</secondsSpentLimit>
+    <unimprovedSecondsSpentLimit>1</unimprovedSecondsSpentLimit>
+    <bestScoreLimit>0hard/0soft</bestScoreLimit>
+  </termination>
+</solver>
