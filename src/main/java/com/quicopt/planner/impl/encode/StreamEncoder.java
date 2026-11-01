@@ -129,51 +129,53 @@ final class StreamEncoder {
     }
 
     /**
-     * The root over a class, one per class and filtering. Scored as they stand, the elements of a list variable
-     * count as assigned when their inverse relation field holds an entity, as the solver API decides it for
-     * {@code forEach}, whichever list holds them; the service decides by the lists, which agree with that field
-     * whenever it computes it.
+     * The root over a class, one per class and filtering: {@code forEach} or {@code forEachIncludingUnassigned},
+     * narrowed by the filters that make the service select what the solver API selects.
+     * <ul>
+     * <li>A subclass of a table's class selects the rows that are instances of it.</li>
+     * <li>Scored as they stand, the elements of a list variable count as assigned when their inverse relation field
+     * holds an entity, as the solver API decides it for {@code forEach}, whichever list holds them; the service
+     * decides by the lists, which agree with that field whenever it computes it.</li>
+     * <li>Scoring loose objects, only the given objects are selected, as the solver API sees no others; the objects
+     * they refer to are rows only for those references.</li>
+     * </ul>
      *
      * @return the root's stream id
      */
     private int root(Class<?> type, boolean filtered) {
-        var base = tables.classOf(type) == null ? tables.superclassTable(type) : null;
-        if (base != null) {
-            return subclassRoot(type, base, filtered);
-        }
-        var info = classInfo(type);
-        var inverse = filtered && tables.shadowsAsData ? tables.listInverseField(info) : null;
-        if (inverse == null) {
-            return roots.computeIfAbsent(info.id + (filtered ? ":assigned" : ":all"), key -> add(StreamNode
-                    .newBuilder().setKind(filtered ? StreamKind.FOR_EACH : StreamKind.FOR_EACH_INCLUDING_UNASSIGNED)
-                    .setClassId(info.id), List.of(Type.ref(info))));
-        }
-        var known = roots.get(info.id + ":inverse");
-        if (known != null) {
-            return known;
-        }
-        int all = root(type, false);
-        int id = add(StreamNode.newBuilder().setKind(StreamKind.FILTER).setInput(all)
-                .setPredicate(lifter.isSet(info, inverse).node()), tuples.get(all));
-        roots.put(info.id + ":inverse", id);
-        return id;
-    }
-
-    /**
-     * @return the root over a subclass of a table's class: the root over that class, filtered on whether each row is
-     *         an instance of the subclass; its tuples hold rows of that class
-     */
-    private int subclassRoot(Class<?> subclass, ClassInfo base, boolean filtered) {
-        var key = base.id + ":" + subclass.getName() + (filtered ? ":assigned" : ":all");
+        var key = type.getName() + (filtered ? ":assigned" : ":all");
         var known = roots.get(key);
         if (known != null) {
             return known;
         }
-        int input = root(base.type, filtered);
-        int id = add(StreamNode.newBuilder().setKind(StreamKind.FILTER).setInput(input)
-                .setPredicate(lifter.isInstance(base, subclass).node()), tuples.get(input));
+        var info = classInfo(type);
+        int id;
+        if (info.type != type) {
+            id = selected(root(info.type, filtered), info, tables.subclassColumn(info, type));
+        } else {
+            var inverse = filtered && tables.shadowsAsData ? tables.listInverseField(info) : null;
+            if (inverse != null) {
+                id = add(StreamNode.newBuilder().setKind(StreamKind.FILTER).setInput(root(type, false))
+                        .setPredicate(lifter.isSet(info, inverse).node()), List.of(Type.ref(info)));
+            } else {
+                id = add(StreamNode.newBuilder().setClassId(info.id)
+                        .setKind(filtered ? StreamKind.FOR_EACH : StreamKind.FOR_EACH_INCLUDING_UNASSIGNED),
+                        List.of(Type.ref(info)));
+                if (tables.hasRowsNotGiven(info)) {
+                    id = selected(id, info, tables.givenColumn(info));
+                }
+            }
+        }
         roots.put(key, id);
         return id;
+    }
+
+    /**
+     * @return a stream of single rows of a class, filtered on one of its yes/no columns
+     */
+    private int selected(int input, ClassInfo info, ProblemTables.ColumnInfo test) {
+        return add(StreamNode.newBuilder().setKind(StreamKind.FILTER).setInput(input)
+                .setPredicate(lifter.holds(info, test).node()), tuples.get(input));
     }
 
     /**

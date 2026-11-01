@@ -26,12 +26,13 @@ public final class ShadowVariableUpdateHelper<Solution_> {
     }
 
     /**
+     * Updates the shadow variables of loose objects in place, by the domain's own methods.
+     *
      * @param solutionClass the class with the {@code PlanningSolution} annotation
-     * @param entities the entities and facts whose shadow variables to update
-     * @throws UnsupportedOperationException always, until shadow variables are implemented
+     * @param entities the entities and facts whose shadow variables to update, with the objects they refer to
      */
     public void updateShadowVariables(Class<Solution_> solutionClass, Object... entities) {
-        throw notYet();
+        Scoring.updateShadows(solutionClass, java.util.Arrays.asList(entities));
     }
 
     /**
@@ -41,13 +42,5 @@ public final class ShadowVariableUpdateHelper<Solution_> {
      */
     public void updateShadowVariables(Solution_ solution) {
         Scoring.updateShadows(solution);
-    }
-
-    /**
-     * @return the exception that every updating method throws until shadow variables are implemented
-     */
-    private static UnsupportedOperationException notYet() {
-        return new UnsupportedOperationException("Updating the shadow variables of loose entities is not"
-                + " implemented yet; update those of a solution instead.");
     }
 }

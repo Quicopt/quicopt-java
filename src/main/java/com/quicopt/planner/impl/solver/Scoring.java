@@ -98,6 +98,17 @@ public final class Scoring {
     }
 
     /**
+     * Updates the shadow variables of loose objects in place, by the domain's own methods: the list shadows of the
+     * elements that the given lists hold, and every declarative shadow variable.
+     *
+     * @param solutionClass the class with the {@code PlanningSolution} annotation
+     * @param objects the entities and facts, together with the objects they refer to
+     */
+    public static void updateShadows(Class<?> solutionClass, List<?> objects) {
+        ShadowCalculator.update(ProblemTables.forShadowsOf(solutionClass, objects));
+    }
+
+    /**
      * @return the service's answer to a score request
      * @throws IllegalStateException when the answer is not a score result, or reports an error
      */

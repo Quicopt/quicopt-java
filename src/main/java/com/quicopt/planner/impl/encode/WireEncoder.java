@@ -426,7 +426,7 @@ public final class WireEncoder {
      * @return one column: its values, or for a list column one list per row
      */
     private Column column(ClassInfo info, ProblemTables.ColumnInfo column) {
-        var name = column.subclass() != null ? "instance of " + column.subclass().getSimpleName()
+        var name = column.test() != null ? column.test().name()
                 : column.field() == null ? "@PlanningId rank" : column.field().getName();
         var wire = Column.newBuilder().setName(name).setValueType(valueType(column.type()));
         var values = tables.columnValues(info, column);

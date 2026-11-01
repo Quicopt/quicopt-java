@@ -186,15 +186,23 @@ public final class ProblemTables {
 
     /**
      * A fact field that some translated function reads. A column without a field is either the class's planning-id
-     * rank, which {@code forEachUniquePair} compares, or whether each row is an instance of a subclass, which a
-     * stream over that subclass selects by.
+     * rank, which {@code forEachUniquePair} compares, or a yes/no test of each row that a stream selects by.
      *
      * @param index its index among its class's columns
-     * @param field the field, or {@code null} for the rank and subclass columns
+     * @param field the field, or {@code null} for the rank and test columns
      * @param type how its values are encoded
-     * @param subclass the subclass a yes/no column tests, or {@code null}
+     * @param test the test of a yes/no column, or {@code null}
      */
-    record ColumnInfo(int index, Field field, Type type, Class<?> subclass) {
+    record ColumnInfo(int index, Field field, Type type, RowTest test) {
+    }
+
+    /**
+     * A yes/no property of each row, sent as a column that streams filter on.
+     *
+     * @param name the column's name, which also identifies the test
+     * @param holds whether a row has the property
+     */
+    record RowTest(String name, java.util.function.Predicate<Object> holds) {
     }
 
     /**
@@ -226,6 +234,8 @@ public final class ProblemTables {
     final boolean shadowsAsData;
     /** Whether the objects were given loose, so that copies of a row stand for it by {@code equals}. */
     private final boolean loose;
+    /** The objects a constraint test gave, when the tables are for scoring them, else {@code null}. */
+    private final java.util.Set<Object> given;
     final List<ClassInfo> classes = new ArrayList<>();
     final List<TableInfo> tables = new ArrayList<>();
     private final Map<Class<?>, ClassInfo> byType = new HashMap<>();
@@ -240,7 +250,7 @@ public final class ProblemTables {
      * @param solution an instance of the class with the {@code PlanningSolution} annotation
      */
     public ProblemTables(Object solution) {
-        this(solution.getClass(), declared(solution), false, false);
+        this(solution.getClass(), declared(solution), false, false, null);
     }
 
     /**
@@ -251,7 +261,7 @@ public final class ProblemTables {
      * @return the tables
      */
     public static ProblemTables asItStands(Object solution) {
-        return new ProblemTables(solution.getClass(), declared(solution), true, false);
+        return new ProblemTables(solution.getClass(), declared(solution), true, false, null);
     }
 
     /**
@@ -264,16 +274,35 @@ public final class ProblemTables {
      * @return the tables
      */
     public static ProblemTables ofObjects(Class<?> solutionClass, List<?> objects) {
-        return new ProblemTables(solutionClass, declared(solutionClass, objects), true, true);
+        return new ProblemTables(solutionClass, declared(solutionClass, objects), true, true, objects);
+    }
+
+    /**
+     * Tables for computing the shadow variables of loose objects: placed as {@link #ofObjects} places them, with
+     * their shadow variables registered, as for solving.
+     *
+     * @param solutionClass the class with the {@code PlanningSolution} annotation
+     * @param objects the objects, entities and facts
+     * @return the tables
+     */
+    public static ProblemTables forShadowsOf(Class<?> solutionClass, List<?> objects) {
+        return new ProblemTables(solutionClass, declared(solutionClass, objects), false, true, null);
     }
 
     /**
      * Reads the declared collections into tables, then the entity classes' variables.
      */
-    private ProblemTables(Class<?> solutionClass, List<Declared> declared, boolean shadowsAsData, boolean loose) {
+    private ProblemTables(Class<?> solutionClass, List<Declared> declared, boolean shadowsAsData, boolean loose,
+            List<?> given) {
         this.solutionClass = solutionClass;
         this.shadowsAsData = shadowsAsData;
         this.loose = loose;
+        if (given == null) {
+            this.given = null;
+        } else {
+            this.given = Collections.newSetFromMap(new IdentityHashMap<>());
+            this.given.addAll(given);
+        }
         for (Declared collection : declared) {
             addClass(collection.type, collection.entity, collection.rows);
         }
@@ -540,12 +569,37 @@ public final class ProblemTables {
      *         on first use
      */
     ColumnInfo subclassColumn(ClassInfo owner, Class<?> subclass) {
+        return testColumn(owner, new RowTest("instance of " + subclass.getName(), subclass::isInstance));
+    }
+
+    /**
+     * @return the column that says whether each row of a class was among the objects a constraint test gave,
+     *         registered on first use
+     */
+    ColumnInfo givenColumn(ClassInfo owner) {
+        return testColumn(owner, new RowTest("given", given::contains));
+    }
+
+    /**
+     * Whether some row of a class is an object that a constraint test referred to without giving it. The solver
+     * API's {@code forEach} sees only given objects, so streams over such a class select the given rows.
+     *
+     * @return whether the class has such a row
+     */
+    boolean hasRowsNotGiven(ClassInfo owner) {
+        return given != null && owner.rows.stream().anyMatch(row -> !given.contains(row));
+    }
+
+    /**
+     * @return the yes/no column of a row test, registered on first use; tests are told apart by name
+     */
+    private ColumnInfo testColumn(ClassInfo owner, RowTest test) {
         for (ColumnInfo column : owner.columns) {
-            if (subclass.equals(column.subclass())) {
+            if (column.test() != null && column.test().name().equals(test.name())) {
                 return column;
             }
         }
-        var column = new ColumnInfo(owner.columns.size(), null, Type.BOOL, subclass);
+        var column = new ColumnInfo(owner.columns.size(), null, Type.BOOL, test);
         owner.columns.add(column);
         return column;
     }
@@ -568,7 +622,7 @@ public final class ProblemTables {
      */
     ColumnInfo rankColumn(ClassInfo owner) {
         for (ColumnInfo column : owner.columns) {
-            if (column.field() == null && column.subclass() == null) {
+            if (column.field() == null && column.test() == null) {
                 return column;
             }
         }
@@ -643,8 +697,8 @@ public final class ProblemTables {
      * @throws Refusal naming the field for a value the wire cannot carry
      */
     long[] columnValues(ClassInfo owner, ColumnInfo column) {
-        if (column.subclass() != null) {
-            return owner.rows.stream().mapToLong(row -> column.subclass().isInstance(row) ? 1 : 0).toArray();
+        if (column.test() != null) {
+            return owner.rows.stream().mapToLong(row -> column.test().holds().test(row) ? 1 : 0).toArray();
         }
         if (column.field() == null) {
             return java.util.Arrays.stream(planningIdRanks(owner)).asLongStream().toArray();
@@ -848,23 +902,33 @@ public final class ProblemTables {
     }
 
     /**
-     * @return every distinct object of a class held by a field of some row of an existing table, in discovery order;
-     *         among loose objects, distinct by {@code equals}
+     * The objects of a class that has no table yet, for its implicit table: every distinct object of the class that
+     * the rows of the existing tables reach through fields and the elements of collection fields, however many
+     * objects of other model classes lie between (an order item's product's location, say). JDK and API classes are
+     * not walked into.
+     *
+     * @return the objects, in breadth-first discovery order; among loose objects, distinct by {@code equals}
      */
     private List<Object> reachableObjects(Class<?> type) {
+        var visited = Collections.newSetFromMap(new IdentityHashMap<Object, Boolean>());
         var seen = Collections.newSetFromMap(new IdentityHashMap<Object, Boolean>());
         var seenByEquals = new HashSet<Object>();
         var found = new ArrayList<Object>();
+        var pending = new java.util.ArrayDeque<Object>();
         for (ClassInfo info : List.copyOf(classes)) {
-            for (Field field : Members.allFields(info.type)) {
-                if (!type.isAssignableFrom(field.getType())) {
-                    continue;
+            info.rows.stream().filter(java.util.Objects::nonNull).forEach(pending::add);
+        }
+        while (!pending.isEmpty()) {
+            var object = pending.poll();
+            if (!visited.add(object)) {
+                continue;
+            }
+            for (Object value : referencedObjects(object)) {
+                if (type.isInstance(value) && seen.add(value) && (!loose || seenByEquals.add(value))) {
+                    found.add(value);
                 }
-                for (Object row : info.rows) {
-                    var value = Members.read(field, row);
-                    if (value != null && seen.add(value) && (!loose || seenByEquals.add(value))) {
-                        found.add(value);
-                    }
+                if (!isValueClass(value.getClass()) && !value.getClass().isEnum()) {
+                    pending.add(value);
                 }
             }
         }

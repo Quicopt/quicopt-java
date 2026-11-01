@@ -148,12 +148,11 @@ final class Lifter implements Opcodes {
     }
 
     /**
-     * @return a predicate on a tuple of one object of {@code owner}: whether the object is an instance of a subclass
+     * @return a predicate on a tuple of one object of {@code owner}: the value of one of its yes/no columns
      */
-    Val isInstance(ProblemTables.ClassInfo owner, Class<?> subclass) {
+    Val holds(ProblemTables.ClassInfo owner, ProblemTables.ColumnInfo test) {
         var object = ir.add("arg", List.of(), Type.ref(owner), owner.id, 0, 0);
-        var column = tables.subclassColumn(owner, subclass);
-        return ir.add("column", List.of(object.node()), column.type(), owner.id, column.index(), 0);
+        return ir.add("column", List.of(object.node()), test.type(), owner.id, test.index(), 0);
     }
 
     /**
