@@ -2,6 +2,8 @@
 // SPDX-FileCopyrightText: (c) 2026 Tim Bode, PGI-12, Forschungszentrum Jülich
 package com.quicopt.planner.testdomain.shifts;
 
+import java.time.LocalDate;
+
 import com.quicopt.planner.api.score.HardSoftScore;
 import com.quicopt.planner.api.score.stream.Constraint;
 import com.quicopt.planner.api.score.stream.ConstraintFactory;
@@ -12,12 +14,15 @@ import com.quicopt.planner.api.score.stream.ConstraintProvider;
  */
 public class BonusConstraints implements ConstraintProvider {
 
+    private static final LocalDate SATURDAY = LocalDate.of(2026, 11, 7);
+
     @Override
     public Constraint[] defineConstraints(ConstraintFactory factory) {
         return new Constraint[] {
                 bonusDay(factory),
                 bonusOrOne(factory),
-                bonusDays(factory)
+                bonusDays(factory),
+                bonusLaterInTheWeek(factory)
         };
     }
 
@@ -49,5 +54,16 @@ public class BonusConstraints implements ConstraintProvider {
                 .filter(shift -> !shift.getBonusByDay().isEmpty())
                 .penalize(HardSoftScore.ONE_SOFT, shift -> shift.getBonusByDay().size())
                 .asConstraint("Bonus days");
+    }
+
+    /**
+     * A shift that has a bonus day between its own day and the weekend: a stream over the days until Saturday, with
+     * a method reference that the compiler guards with a null check.
+     */
+    Constraint bonusLaterInTheWeek(ConstraintFactory factory) {
+        return factory.forEach(Shift.class)
+                .filter(shift -> shift.getDay().datesUntil(SATURDAY).anyMatch(shift.getBonusByDay().keySet()::contains))
+                .penalize(HardSoftScore.ONE_SOFT)
+                .asConstraint("Bonus later in the week");
     }
 }

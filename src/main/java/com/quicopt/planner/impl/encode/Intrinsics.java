@@ -59,7 +59,12 @@ final class Intrinsics {
                 case "compareTo" -> ir.apply("cmp", Type.INT, args.get(0), args.get(1));
                 default -> null;
             };
-            case "java/lang/Object", "java/lang/Enum", "java/util/Objects" ->
+            case "java/util/Objects" -> switch (name) {
+                case "equals" -> equality(args.get(0), args.get(1));
+                case "requireNonNull" -> args.size() == 1 ? requireNonNull(args.get(0)) : null;
+                default -> null;
+            };
+            case "java/lang/Object", "java/lang/Enum" ->
                     name.equals("equals") ? equality(args.get(0), args.get(1)) : null;
             case LOAD_BALANCE -> name.equals("unfairness") ? ir.apply("unfairness", Type.BIG_DECIMAL, args.get(0)) : null;
             default -> null;
@@ -204,6 +209,23 @@ final class Intrinsics {
             case "get" -> ir.apply("get", requireList(a.get(0)).type().element(), a.get(0), a.get(1));
             default -> null;
         };
+    }
+
+    /**
+     * {@code Objects.requireNonNull(v)}: the value itself, failing where it is null. A list is checked by reading
+     * its size, which fails on a null list. An object the lifter knows is never null.
+     *
+     * @return the value, checked
+     */
+    private Val requireNonNull(Val v) {
+        if (v.known() != null || ir.isConstant(v) && ir.constantValue(v) != Type.NULL_LONG
+                && ir.constantValue(v) != -1 || v.type().kind() == Kind.BOOL) {
+            return v;
+        }
+        var isNull = v.type().kind() == Kind.LIST
+                ? ir.apply("lt", Type.BOOL, ir.apply("size", Type.INT, v), ir.constant(Type.INT, 0))
+                : ir.apply("eq", Type.BOOL, v, ir.nullOf(v.type()));
+        return ir.choose(isNull, ir.add("fail", List.of(), v.type(), 0, 0, 0), v);
     }
 
     /**

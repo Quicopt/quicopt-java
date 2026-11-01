@@ -91,6 +91,7 @@ final class WireEvaluator {
             case "contains" -> bool(list(eval(e.getArgs(0), tuple)).contains(eval(e.getArgs(1), tuple)));
             case "size" -> (long) list(eval(e.getArgs(0), tuple)).size();
             case "index_of" -> (long) list(eval(e.getArgs(0), tuple)).indexOf(eval(e.getArgs(1), tuple));
+            case "dates_until" -> datesUntil(eval(e.getArgs(0), tuple), eval(e.getArgs(1), tuple));
             case "get" -> element(list(eval(e.getArgs(0), tuple)), num(eval(e.getArgs(1), tuple)));
             default -> e.getArgsCount() == 1 ? unary(e, tuple) : binary(e, tuple);
         };
@@ -362,5 +363,22 @@ final class WireEvaluator {
      */
     private static boolean truth(Object value) {
         return num(value) != 0;
+    }
+
+    /**
+     * @return the day numbers from {@code from} up to the day before {@code to}
+     * @throws Failed on a null date and when {@code to} is before {@code from}, as {@code LocalDate.datesUntil}
+     */
+    private static List<Long> datesUntil(Object from, Object to) {
+        long a = (Long) from;
+        long b = (Long) to;
+        if (a == Type.NULL_LONG || b == Type.NULL_LONG || b < a) {
+            throw new Failed("datesUntil");
+        }
+        var days = new java.util.ArrayList<Long>();
+        for (long d = a; d < b; d++) {
+            days.add(d);
+        }
+        return days;
     }
 }

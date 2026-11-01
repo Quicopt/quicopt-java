@@ -134,6 +134,7 @@ seconds with truncation.
 
 | Op | Operands | Result | Java |
 |---|---|---|---|
+| `dates_until` | DATE a, DATE b | LIST of DATE | `a.datesUntil(b)` collected: the days from a up to the day before b, in order. Fails on null and when b is before a (`IllegalArgumentException`) |
 | `truncate` | DURATION, L unit | DURATION | `Duration.truncatedTo(u)` for the unit u whose length is `unit` nanoseconds. Exactly as the JDK computes it: with s = ⌊d / 10⁹⌋ and n = d − 10⁹·s, let nod = (s rem 86400)·10⁹ + n and r = (nod div unit)·unit with truncating division; the result is d + (r − nod). Fails on null |
 
 ## Collector results

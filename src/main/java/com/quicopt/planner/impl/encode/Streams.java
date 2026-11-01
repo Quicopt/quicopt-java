@@ -13,7 +13,8 @@ import com.quicopt.planner.impl.encode.Type.Kind;
 
 /**
  * Java streams over a list inside a translated function, such as
- * {@code skills.stream().filter(s -> !known.contains(s)).count()}. A stream is held while it is built: its source
+ * {@code skills.stream().filter(s -> !known.contains(s)).count()}, or over the days from one date until another
+ * ({@code LocalDate.datesUntil}). A stream is held while it is built: its source
  * list and its {@code filter} and {@code map} steps. Its terminal operation becomes one fold over the list. The
  * fold's update is a nested choice, so a step after a filter only runs for elements that passed it, and
  * {@code anyMatch}, {@code allMatch} and {@code noneMatch} stop evaluating once their answer is known, as Java's
@@ -82,6 +83,10 @@ final class Streams {
         var receiver = args.get(0);
         if (name.equals("stream") && args.size() == 1 && receiver.type().kind() == Kind.LIST) {
             return held(new Pipeline(receiver, List.of(), receiver.type().element()));
+        }
+        if (name.equals("datesUntil") && args.size() == 2 && receiver.type().kind() == Kind.DATE) {
+            var days = ir.apply("dates_until", Type.list(Type.DATE), receiver, args.get(1));
+            return held(new Pipeline(days, List.of(), Type.DATE));
         }
         if (!(receiver.known() instanceof Pipeline pipeline)) {
             return null;
