@@ -24,6 +24,7 @@ import com.quicopt.planner.testdomain.lifting.VisitorPlan;
 import com.quicopt.planner.testdomain.meetings.Meeting;
 import com.quicopt.planner.testdomain.meetings.MeetingConstraints;
 import com.quicopt.planner.testdomain.meetings.MeetingPlan;
+import com.quicopt.planner.testdomain.lifting.StreamConstraints;
 import com.quicopt.planner.testdomain.shifts.BonusConstraints;
 import com.quicopt.planner.testdomain.shifts.ShiftPlan;
 import com.quicopt.planner.testdomain.meetings.Room;
@@ -171,5 +172,14 @@ class LifterTest {
     @Test
     void mapLookupsAndEnumFieldsAgree() {
         assertAgrees(FunctionCheck.run(ShiftPlan.twoShifts(), BonusConstraints.class, 40, 6));
+    }
+
+    /**
+     * Streams over a list (filter, map, mapToInt; count, sum, anyMatch, allMatch, noneMatch) with lambdas that
+     * capture the row agree with Java.
+     */
+    @Test
+    void streamsOverListsAgree() {
+        assertAgrees(FunctionCheck.run(RoutePlan.smallTown(), StreamConstraints.class, 40, 7));
     }
 }

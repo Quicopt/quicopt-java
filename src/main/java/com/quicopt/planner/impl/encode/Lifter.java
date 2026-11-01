@@ -16,12 +16,14 @@ import java.util.Map;
 import java.util.TreeSet;
 
 import org.objectweb.asm.ClassReader;
+import org.objectweb.asm.Handle;
 import org.objectweb.asm.Opcodes;
 import org.objectweb.asm.tree.AbstractInsnNode;
 import org.objectweb.asm.tree.ClassNode;
 import org.objectweb.asm.tree.FieldInsnNode;
 import org.objectweb.asm.tree.IincInsnNode;
 import org.objectweb.asm.tree.IntInsnNode;
+import org.objectweb.asm.tree.InvokeDynamicInsnNode;
 import org.objectweb.asm.tree.JumpInsnNode;
 import org.objectweb.asm.tree.LabelNode;
 import org.objectweb.asm.tree.LdcInsnNode;
@@ -92,6 +94,11 @@ final class Lifter implements Opcodes {
     private final ProblemTables tables;
     private final Ir ir;
     private final Intrinsics intrinsics;
+    /** Streams over lists, whose functions this lifter applies. */
+    private final Streams streams;
+    /** The default methods of the functional interfaces, which combine functions rather than apply them. */
+    private static final java.util.Set<String> FUNCTION_DEFAULTS = java.util.Set.of("and", "or", "negate",
+            "andThen", "compose", "reversed", "thenComparing");
     private final KnownLambdas knownLambdas = new KnownLambdas();
     private final ClassLoader loader;
     private final Map<String, ClassNode> classNodes = new HashMap<>();
@@ -108,6 +115,7 @@ final class Lifter implements Opcodes {
         this.tables = tables;
         this.ir = ir;
         this.intrinsics = new Intrinsics(tables, ir);
+        this.streams = new Streams(ir, this::applyFunction);
         this.loader = loader;
     }
 
@@ -152,22 +160,66 @@ final class Lifter implements Opcodes {
         if (known != null) {
             return known;
         }
-        var site = LambdaRegistry.siteOf(lambda);
+        try {
+            return sendable(applyFunction(lambda, elements));
+        } catch (Refusal refusal) {
+            throw located(refusal);
+        }
+    }
+
+    /**
+     * Applies a function to values while translating: a lambda the model created, which runs its own code with the
+     * values it captured, or a lambda created inside the code being translated ({@link Streams.Closure}).
+     *
+     * @return the function's value
+     * @throws Refusal when the function has no translation
+     */
+    private Val applyFunction(Object function, List<Val> elements) {
+        if (function instanceof Val v && v.known() != null) {
+            function = v.known();
+        }
+        if (function instanceof Streams.Closure closure) {
+            var args = new ArrayList<>(closure.captured());
+            args.addAll(elements);
+            var impl = closure.implMethod();
+            return call(impl.getOwner(), impl.getName(), impl.getDesc(), impl.getTag() == H_INVOKESTATIC, args);
+        }
+        var known = knownLambdas.translate(function, elements, ir);
+        if (known != null) {
+            return known;
+        }
+        var site = LambdaRegistry.siteOf(function);
         if (site == null) {
-            throw new Refusal("a function created outside the constraint provider: " + lambda);
+            throw new Refusal("a function created outside the constraint provider: " + function);
         }
         var args = new ArrayList<Val>();
-        for (var captured : LambdaRegistry.capturedValues(lambda)) {
+        for (var captured : LambdaRegistry.capturedValues(function)) {
             args.add(constantOf(captured.type(), captured.value()));
         }
         args.addAll(elements);
         var impl = site.implMethod();
-        try {
-            return sendable(call(impl.getOwner(), impl.getName(), impl.getDesc(), impl.getTag() == H_INVOKESTATIC,
-                    args));
-        } catch (Refusal refusal) {
-            throw located(refusal);
+        return call(impl.getOwner(), impl.getName(), impl.getDesc(), impl.getTag() == H_INVOKESTATIC, args);
+    }
+
+    /**
+     * A lambda or method reference created inside the code being translated, held as the method that holds its
+     * code and the values it captures. Other dynamic call sites, such as string concatenation, have no translation.
+     *
+     * @return the lambda, as an object only stream methods and the lambda's own method may use
+     * @throws Refusal for a dynamic call site other than a lambda
+     */
+    private Val closure(InvokeDynamicInsnNode insn, Frame frame) {
+        var bootstrap = insn.bsm;
+        if (!bootstrap.getOwner().equals("java/lang/invoke/LambdaMetafactory") || insn.bsmArgs.length < 2
+                || !(insn.bsmArgs[1] instanceof Handle impl)) {
+            throw new Refusal("the dynamic call " + insn.name + " (only lambdas inside a function translate)");
         }
+        int count = org.objectweb.asm.Type.getArgumentTypes(insn.desc).length;
+        var captured = new ArrayList<Val>();
+        for (int i = 0; i < count; i++) {
+            captured.add(0, frame.pop());
+        }
+        return new Val(-1, Type.object(Object.class), new Streams.Closure(impl, captured));
     }
 
     /**
@@ -760,6 +812,8 @@ final class Lifter implements Opcodes {
             frame.push(getStatic((FieldInsnNode) insn));
         } else if (op >= INVOKEVIRTUAL && op <= INVOKEINTERFACE) {
             invoke((MethodInsnNode) insn, frame);
+        } else if (op == INVOKEDYNAMIC) {
+            frame.push(closure((InvokeDynamicInsnNode) insn, frame));
         } else {
             stepArithmetic(op, frame);
         }
@@ -831,6 +885,17 @@ final class Lifter implements Opcodes {
         }
         if (org.objectweb.asm.Type.getReturnType(insn.desc) == org.objectweb.asm.Type.VOID_TYPE) {
             throw new Refusal("a call to the void method " + insn.name);
+        }
+        if (!isStatic) {
+            if (args.get(0).known() instanceof Streams.Closure closure && !FUNCTION_DEFAULTS.contains(insn.name)) {
+                frame.push(applyFunction(closure, args.subList(1, args.size())));
+                return;
+            }
+            var streamed = streams.call(insn.owner, insn.name, args);
+            if (streamed != null) {
+                frame.push(streamed);
+                return;
+            }
         }
         frame.push(call(insn.owner, insn.name, insn.desc, isStatic, args));
     }

@@ -54,28 +54,55 @@ final class PlanningCloner {
                 clones.put(entity, newInstance(entity.getClass()));
             }
         }
-        for (var entry : clones.entrySet()) {
-            copyFields(entry.getKey(), entry.getValue(), clones);
-        }
         var copy = newInstance(solution.getClass());
-        copyFields(solution, copy, clones);
+        for (boolean containers : new boolean[] { false, true }) {
+            for (var entry : clones.entrySet()) {
+                copyFields(entry.getKey(), entry.getValue(), clones, containers);
+            }
+            copyFields(solution, copy, clones, containers);
+        }
         return (Solution_) copy;
     }
 
     /**
-     * Copies every instance field of {@code from} into {@code to}, pointing entity references to their clones.
+     * Copies the instance fields of {@code from} into {@code to}, pointing entity references to their clones. The
+     * clone is made in two passes: first the fields that hold no collection, map or array of entities, then those
+     * that do. A new set or map of clones hashes them, and a clone's {@code hashCode} may read fields of its own,
+     * which the first pass has copied by then.
      *
+     * @param containers whether to copy the fields that hold entities in a collection, map or array, rather than the
+     *        others
      * @throws Refusal for a field that asks for a deep planning clone
      */
-    private static void copyFields(Object from, Object to, Map<Object, Object> clones) {
+    private static void copyFields(Object from, Object to, Map<Object, Object> clones, boolean containers) {
         for (Field field : Members.allFields(from.getClass())) {
             if (field.isAnnotationPresent(DeepPlanningClone.class)
                     || field.getType().isAnnotationPresent(DeepPlanningClone.class)) {
                 throw new Refusal("the @DeepPlanningClone field " + from.getClass().getSimpleName() + "."
                         + field.getName() + " (not cloned yet)");
             }
-            Members.write(field, to, remap(Members.read(field, from), clones));
+            var value = Members.read(field, from);
+            if (holdsEntities(value, clones) == containers) {
+                Members.write(field, to, remap(value, clones));
+            }
         }
+    }
+
+    /**
+     * @return whether a value is a collection, map or array that holds entities, which {@link #remap} copies
+     */
+    private static boolean holdsEntities(Object value, Map<Object, Object> clones) {
+        if (value == null || clones.containsKey(value)) {
+            return false;
+        }
+        if (value instanceof Collection<?> collection) {
+            return (value instanceof List<?> || value instanceof Set<?>) && holdsEntity(collection, clones);
+        }
+        if (value instanceof Map<?, ?> map) {
+            return holdsEntity(map.keySet(), clones) || holdsEntity(map.values(), clones);
+        }
+        return value.getClass().isArray() && !value.getClass().getComponentType().isPrimitive()
+                && holdsEntity(java.util.Arrays.stream((Object[]) value).filter(e -> e != null).toList(), clones);
     }
 
     /**
