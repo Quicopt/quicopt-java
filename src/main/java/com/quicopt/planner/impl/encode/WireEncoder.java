@@ -696,6 +696,8 @@ public final class WireEncoder {
             case REF -> ValueKind.REF;
             case LIST -> ValueKind.LIST;
             case LOAD_BALANCE -> ValueKind.LOAD_BALANCE;
+            case SEQUENCE_CHAIN -> ValueKind.SEQUENCE_CHAIN;
+            case SEQUENCE -> ValueKind.SEQUENCE;
             case ITERATOR, NULL, OBJECT, MAP -> throw new Refusal("a value of kind " + type.kind() + " on the wire");
         });
         if (type.refClass() != null) {

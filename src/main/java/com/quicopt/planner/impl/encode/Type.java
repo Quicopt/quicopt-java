@@ -19,6 +19,8 @@ import java.util.Collection;
  * <li>{@code LIST} a collection of {@code element}s, {@code LOAD_BALANCE} the result of the {@code loadBalance}
  * collector;</li>
  * <li>{@code MAP} a map, which reaches the wire as two lists, its keys and its values in the same order;</li>
+ * <li>{@code SEQUENCE_CHAIN} the result of the {@code toConsecutiveSequences} collector, {@code SEQUENCE} one of
+ * its runs; for both, {@code element} is the type of their items;</li>
  * <li>{@code ITERATOR} an iterator over a list, which exists only while a loop is folded and never reaches the
  * wire; {@code NULL} the type of a {@code null} literal before its context gives it one; {@code OBJECT} an object
  * the lifter knows while it translates, such as the constraint provider, which never reaches the wire either.</li>
@@ -37,7 +39,7 @@ public record Type(Kind kind, ProblemTables.ClassInfo refClass, Type element, Cl
     /** The kinds of value. */
     public enum Kind {
         BOOL, INT, LONG, DOUBLE, BIG_DECIMAL, STRING, ENUM, TIME, DATE, DATETIME, DURATION, REF, LIST,
-        LOAD_BALANCE, ITERATOR, NULL, OBJECT, MAP
+        LOAD_BALANCE, ITERATOR, NULL, OBJECT, MAP, SEQUENCE_CHAIN, SEQUENCE
     }
 
     /** The encoding of a null time, date, duration or number. */
@@ -85,6 +87,20 @@ public record Type(Kind kind, ProblemTables.ClassInfo refClass, Type element, Cl
     }
 
     /**
+     * @return the type of a chain of consecutive sequences of items
+     */
+    static Type sequenceChain(Type item) {
+        return new Type(Kind.SEQUENCE_CHAIN, null, item, Object.class, null);
+    }
+
+    /**
+     * @return the type of one run of consecutive items
+     */
+    static Type sequence(Type item) {
+        return new Type(Kind.SEQUENCE, null, item, Object.class, null);
+    }
+
+    /**
      * @return the type of a map from keys to values
      */
     static Type map(Type key, Type value) {
@@ -124,6 +140,8 @@ public record Type(Kind kind, ProblemTables.ClassInfo refClass, Type element, Cl
             case REF -> refClass.type.getSimpleName();
             case LIST -> "List<" + element + ">";
             case MAP -> "Map<" + element + ", " + value + ">";
+            case SEQUENCE_CHAIN -> "SequenceChain<" + element + ">";
+            case SEQUENCE -> "Sequence<" + element + ">";
             case ENUM, OBJECT -> javaType.getSimpleName();
             default -> kind.toString();
         };

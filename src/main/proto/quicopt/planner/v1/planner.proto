@@ -75,6 +75,10 @@ option java_multiple_files = true;
 //                 messages, in the collection's iteration order
 //   LOAD_BALANCE  the result of the loadBalance collector; it exists only
 //                 inside the server and never appears in data
+//   SEQUENCE_CHAIN the result of the toConsecutiveSequences collector, and
+//   SEQUENCE      one of its runs of consecutive items; both exist only
+//                 inside the server, and ValueType.element is their items'
+//                 type
 //
 // Null. A REF is null as -1. Every other int64-encoded kind is null as
 // -2^63 (Long.MIN_VALUE). BOOL, INT and LONG are Java primitives and are null
@@ -97,12 +101,15 @@ enum ValueKind {
   REF = 12;
   LIST = 13;
   LOAD_BALANCE = 14;
+  SEQUENCE_CHAIN = 15;
+  SEQUENCE = 16;
 }
 
 message ValueType {
   ValueKind kind = 1;
   uint32 ref_class = 2;   // REF: the class id
-  ValueType element = 3;  // LIST: the element type
+  ValueType element = 3;  // LIST: the element type; SEQUENCE_CHAIN and
+                          // SEQUENCE: the type of their items
 }
 
 // A Java BigDecimal: value = unscaled × 10^(−scale).
@@ -389,6 +396,8 @@ enum CollectorKind {
   COLLECT_TO_SET = 8;         // the distinct values of functions[0] (LIST)
   // functions = [balanced item, load (LONG), initial load (LONG)]
   COLLECT_LOAD_BALANCE = 9;
+  // functions = [item, index (INT)]; result SEQUENCE_CHAIN of the item type
+  COLLECT_CONSECUTIVE_SEQUENCES = 10;
 }
 
 message Collector {

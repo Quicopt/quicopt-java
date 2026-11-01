@@ -20,6 +20,8 @@ final class Intrinsics {
     private static final long NANOS_PER_HOUR = 60 * NANOS_PER_MINUTE;
     private static final long NANOS_PER_DAY = 24 * NANOS_PER_HOUR;
     private static final String LOAD_BALANCE = "com/quicopt/planner/api/score/stream/common/LoadBalance";
+    private static final String SEQUENCE_CHAIN = "com/quicopt/planner/api/score/stream/common/SequenceChain";
+    private static final String SEQUENCE = "com/quicopt/planner/api/score/stream/common/Sequence";
 
     private final ProblemTables tables;
     private final Ir ir;
@@ -67,6 +69,9 @@ final class Intrinsics {
             case "java/lang/Object", "java/lang/Enum" ->
                     name.equals("equals") ? equality(args.get(0), args.get(1)) : null;
             case LOAD_BALANCE -> name.equals("unfairness") ? ir.apply("unfairness", Type.BIG_DECIMAL, args.get(0)) : null;
+            case SEQUENCE_CHAIN -> name.equals("getConsecutiveSequences") ? ir.apply("consecutive_sequences",
+                    Type.list(Type.sequence(args.get(0).type().element())), args.get(0)) : null;
+            case SEQUENCE -> sequence(name, args.get(0));
             default -> null;
         };
     }
@@ -207,6 +212,24 @@ final class Intrinsics {
             case "isEmpty" -> ir.apply("eq", Type.BOOL, ir.apply("size", Type.INT, requireList(a.get(0))),
                     ir.constant(Type.INT, 0));
             case "get" -> ir.apply("get", requireList(a.get(0)).type().element(), a.get(0), a.get(1));
+            default -> null;
+        };
+    }
+
+    /**
+     * The methods of one run of consecutive items: its count of distinct items, its length (an int index's
+     * difference), its first and last item, and whether it is the chain's first or last run.
+     *
+     * @return the translation, or {@code null} for another method
+     */
+    private Val sequence(String name, Val seq) {
+        return switch (name) {
+            case "getCount" -> ir.apply("sequence_count", Type.INT, seq);
+            case "getLength" -> ir.apply("sequence_length", Type.INT, seq);
+            case "getFirstItem" -> ir.apply("sequence_first", seq.type().element(), seq);
+            case "getLastItem" -> ir.apply("sequence_last", seq.type().element(), seq);
+            case "isFirst" -> ir.apply("sequence_is_first", Type.BOOL, seq);
+            case "isLast" -> ir.apply("sequence_is_last", Type.BOOL, seq);
             default -> null;
         };
     }

@@ -162,3 +162,22 @@ digits, half even". -->
 A balanced item contributes from the first input tuple that names it until
 the last such tuple leaves. Its load is the sum of the load function over
 those tuples, plus the initial load counted once.
+
+## Consecutive sequences
+
+The `COLLECT_CONSECUTIVE_SEQUENCES` collector is
+`ConstraintCollectors.toConsecutiveSequences(item, index)` with an int index.
+Its result, a SEQUENCE_CHAIN, holds the distinct items of the group's tuples
+(an item is in the chain from the first tuple that gives it until the last
+such tuple leaves), each at its index. A run is a maximal set of items whose
+distinct indices, in order, differ by at most 1; items at one index are in
+one run. A SEQUENCE is one run of a chain, as it stands when the operator
+reads it.
+
+| Op | Operands | Result | Java |
+|---|---|---|---|
+| `consecutive_sequences` | SEQUENCE_CHAIN of E | LIST of SEQUENCE of E | `SequenceChain.getConsecutiveSequences()`: the runs, by increasing index |
+| `sequence_count` | SEQUENCE | I | `Sequence.getCount()`: the number of distinct items of the run |
+| `sequence_length` | SEQUENCE | I | `Sequence.getLength()`: its last index minus its first plus one |
+| `sequence_first`, `sequence_last` | SEQUENCE of E | E | `Sequence.getFirstItem()`, `getLastItem()`: an item at the run's least (greatest) index. Where several items share that index, Java picks one by identity hash code; the server picks the one with the least (greatest) encoding |
+| `sequence_is_first`, `sequence_is_last` | SEQUENCE | B | `Sequence.isFirst()`, `isLast()`: whether no run comes before (after) it |

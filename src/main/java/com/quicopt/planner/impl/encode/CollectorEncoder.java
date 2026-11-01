@@ -145,6 +145,18 @@ final class CollectorEncoder {
                 var property = ranked(lifter.liftApplied(arguments.get(1), List.of(item)), ir);
                 return single(kind, item.type(), item, property);
             }
+            case "toConsecutiveSequences" -> {
+                var item = arguments.size() == 1 ? lifter.lift(identityOf(tuple), tuple) : lifter.lift(arguments.get(0), tuple);
+                if (!item.type().isNumberEncoded() && item.type().kind() != Type.Kind.REF) {
+                    throw new Refusal("toConsecutiveSequences over items of type " + item.type());
+                }
+                var index = lifter.liftApplied(arguments.get(arguments.size() - 1), List.of(item));
+                if (index.type().kind() != Type.Kind.INT) {
+                    throw new Refusal("toConsecutiveSequences with an index of type " + index.type());
+                }
+                return single(CollectorKind.COLLECT_CONSECUTIVE_SEQUENCES, Type.sequenceChain(item.type()), item,
+                        ir.apply("unbox", Type.INT, index));
+            }
             case "compose" -> {
                 var parts = new ArrayList<Encoded>();
                 for (Object part : arguments.subList(0, arguments.size() - 1)) {
@@ -159,6 +171,17 @@ final class CollectorEncoder {
             }
         }
         throw new Refusal("the collector " + signature + ", which the service does not compute yet");
+    }
+
+    /**
+     * @return the function that gives a one-element tuple's element, for collectors whose item is the tuple itself
+     * @throws Refusal for a longer tuple
+     */
+    private static Object identityOf(List<Type> tuple) {
+        if (tuple.size() != 1) {
+            throw new Refusal("a collector over the whole of a " + tuple.size() + "-element tuple");
+        }
+        return java.util.function.Function.identity();
     }
 
     /**
