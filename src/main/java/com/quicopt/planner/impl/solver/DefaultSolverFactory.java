@@ -62,6 +62,14 @@ public final class DefaultSolverFactory<Solution_> implements SolverFactory<Solu
     }
 
     /**
+     * @return the configured model as scoring needs it: the entity classes and the recorded constraints
+     */
+    Scoring scoring() {
+        return new Scoring(entityClasses, recordedConstraints(),
+                SolverSettings.constraintProviderClass(solverConfig).getClassLoader());
+    }
+
+    /**
      * @return the constraint provider's constraints, recorded on first use from a provider with the
      *         configuration's custom properties applied
      */

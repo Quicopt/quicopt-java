@@ -9,14 +9,13 @@ import java.util.List;
 import java.util.Map;
 
 import com.quicopt.planner.api.score.Score;
-import com.quicopt.planner.api.score.stream.ConstraintMetadata;
-import com.quicopt.planner.api.score.stream.ConstraintRef;
 import com.quicopt.planner.impl.bavet.bi.joiner.DefaultBiJoiner;
 import com.quicopt.planner.impl.bavet.common.joiner.AbstractJoiner;
 import com.quicopt.planner.impl.bavet.penta.joiner.DefaultPentaJoiner;
 import com.quicopt.planner.impl.bavet.quad.joiner.DefaultQuadJoiner;
 import com.quicopt.planner.impl.bavet.tri.joiner.DefaultTriJoiner;
 import com.quicopt.planner.impl.encode.ProblemTables.ClassInfo;
+import com.quicopt.planner.impl.score.stream.RecordedStreams;
 import com.quicopt.planner.impl.score.stream.RecordedStreams.Node;
 import com.quicopt.planner.wire.ConstraintDecl;
 import com.quicopt.planner.wire.Impact;
@@ -61,7 +60,7 @@ final class StreamEncoder {
      */
     ConstraintDecl constraint(Node asConstraint, Class<?> scoreClass) {
         var impact = asConstraint.input();
-        var name = ConstraintRef.of(((ConstraintMetadata) asConstraint.args().get(0)).id()).id();
+        var name = RecordedStreams.constraintId(asConstraint);
         var weight = (Score<?>) impact.args().get(0);
         if (weight.getClass() != scoreClass) {
             throw new IllegalArgumentException("The constraint (" + name + ") has a weight of type "

@@ -112,6 +112,15 @@ public class Stop {
         return arrivalTime;
     }
 
+    /**
+     * Sets the arrival time by hand, as a constraint test does.
+     *
+     * @param arrivalTime minutes after midnight
+     */
+    public void setArrivalTime(Integer arrivalTime) {
+        this.arrivalTime = arrivalTime;
+    }
+
     @Override
     public String toString() {
         return "Stop " + id;

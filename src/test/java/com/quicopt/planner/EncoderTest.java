@@ -207,6 +207,39 @@ class EncoderTest {
     }
 
     /**
+     * Loose objects, as a constraint test gives them, become rows of their collection's class, and so do the
+     * objects they reference: a meeting given alone brings its slot and its room.
+     */
+    @Test
+    void givenObjectsBringWhatTheyReference() {
+        var plan = MeetingPlan.smallWeek();
+        var meeting = plan.getMeetings().get(0);
+        meeting.place(plan.getSlots().get(1), plan.getRooms().get(0));
+        var tables = ProblemTables.ofObjects(MeetingPlan.class, List.of(meeting));
+        assertEquals(List.of(List.of(plan.getSlots().get(1)), List.of(plan.getRooms().get(0)), List.of(meeting)),
+                tables.classes().stream().map(ProblemTables.ClassInfo::rows).toList());
+    }
+
+    /**
+     * Scored as it stands, a stop's arrival time is sent as a plain field with the value the test set, not as a
+     * shadow variable for the service to compute.
+     */
+    @Test
+    void shadowVariablesAsTheyStandAreFields() {
+        var plan = RoutePlan.smallTown();
+        var stop = plan.getStops().get(0);
+        plan.getCouriers().get(0).getStops().add(stop);
+        stop.setArrivalTime(570);
+        var problem = new WireEncoder(ProblemTables.asItStands(plan), RouteConstraints.class.getClassLoader())
+                .encode(RecordedStreams.record(RouteConstraints.class), SolverConfig.getDefaultInstance());
+        var stops = problem.getClassesList().stream().filter(c -> c.getName().equals("Stop")).findFirst().orElseThrow();
+        assertTrue(stops.getShadowsList().isEmpty());
+        var arrival = stops.getColumnsList().stream().filter(c -> c.getName().equals("arrivalTime")).findFirst()
+                .orElseThrow();
+        assertEquals(570, arrival.getValues(0));
+    }
+
+    /**
      * A constraint whose filter is random, which no solver could score.
      */
     public static class RandomConstraints implements ConstraintProvider {

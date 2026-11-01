@@ -71,7 +71,7 @@ public final class WireEncoder {
      */
     public PlanningProblem encode(List<RecordedStreams.Node> constraints, SolverConfig solverConfig) {
         var problem = PlanningProblem.newBuilder();
-        var scoreClass = scoreClass(tables.solution.getClass());
+        var scoreClass = scoreClass(tables.solutionClass);
         var definition = scoreDefinition(scoreClass);
         for (RecordedStreams.Node constraint : constraints) {
             problem.addConstraints(streams.constraint(constraint, scoreClass));

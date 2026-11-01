@@ -75,7 +75,7 @@ final class SolutionWriter {
     /**
      * @return the solution class's {@code @PlanningScore} field
      */
-    private static Field scoreField(Class<?> solutionClass) {
+    static Field scoreField(Class<?> solutionClass) {
         return Members.allFields(solutionClass).stream().filter(f -> f.isAnnotationPresent(PlanningScore.class))
                 .findFirst().orElseThrow();
     }

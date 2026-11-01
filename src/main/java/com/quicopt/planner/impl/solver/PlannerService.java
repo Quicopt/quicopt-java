@@ -86,7 +86,7 @@ final class PlannerService {
         return switch (error.getKind()) {
             case UNSUPPORTED -> new UnsupportedOperationException("The planner service cannot solve this model yet: "
                     + message);
-            case USER_CODE -> new IllegalStateException("A constraint function failed during solving: " + message);
+            case USER_CODE -> new IllegalStateException("A constraint function failed: " + message);
             case INVALID -> new IllegalStateException("The planner service rejected the problem: " + message);
             default -> new IllegalStateException("The planner service failed (" + kindName(error.getKind()) + "): "
                     + message);

@@ -7,6 +7,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNotSame;
 import static org.junit.jupiter.api.Assertions.assertSame;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.net.URI;
@@ -15,8 +16,11 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.time.Duration;
 
+import com.quicopt.planner.api.score.HardSoftScore;
 import com.quicopt.planner.api.score.Score;
 import com.quicopt.planner.api.score.stream.ConstraintProvider;
+import com.quicopt.planner.api.solver.SolutionManager;
+import com.quicopt.planner.api.solver.SolutionUpdatePolicy;
 import com.quicopt.planner.api.solver.SolverFactory;
 import com.quicopt.planner.config.solver.SolverConfig;
 import com.quicopt.planner.impl.encode.ScoreCodec;
@@ -98,6 +102,34 @@ class LiveSolveTest {
             assertSame(room, meeting.getRoom());
         }
         assertTrue(solution.getScore().hardScore() < 0, solution.getScore()::toString);
+    }
+
+    /**
+     * {@code SolutionManager.update} scores a solved plan on the service. With {@code UPDATE_SCORE_ONLY} the plan
+     * counts as it stands, so a stop that the test makes 100 minutes late by hand costs that; the default policy
+     * computes the arrival again first and gives the solve's score back; {@code UPDATE_SHADOW_VARIABLES_ONLY}
+     * computes the arrival and keeps the score.
+     */
+    @Test
+    void updateScoresSolutions() {
+        var factory = SolverFactory.<RoutePlan> create(
+                config(RoutePlan.class, RouteConstraints.class, Courier.class, Stop.class));
+        RoutePlan solution = factory.buildSolver().solve(RoutePlan.smallTown());
+        var solved = solution.getScore();
+        var manager = SolutionManager.<RoutePlan, HardSoftScore> create(factory);
+        var stop = solution.getStops().get(0);
+        int arrival = stop.getArrivalTime();
+        stop.setArrivalTime(stop.getDueTime() + 100);
+        var asItStands = manager.update(solution, SolutionUpdatePolicy.UPDATE_SCORE_ONLY);
+        assertEquals(solved.hardScore() + Math.max(0, arrival - stop.getDueTime()) - 100, asItStands.hardScore());
+        assertEquals(stop.getDueTime() + 100, stop.getArrivalTime());
+        assertEquals(solved, manager.update(solution));
+        assertEquals(arrival, stop.getArrivalTime());
+        assertEquals(solved, solution.getScore());
+        stop.setArrivalTime(0);
+        assertEquals(solved, manager.update(solution, SolutionUpdatePolicy.UPDATE_SHADOW_VARIABLES_ONLY));
+        assertEquals(arrival, stop.getArrivalTime());
+        assertThrows(IllegalArgumentException.class, () -> manager.update(solution, SolutionUpdatePolicy.NO_UPDATE));
     }
 
     /**

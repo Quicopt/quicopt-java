@@ -2,9 +2,11 @@
 // SPDX-FileCopyrightText: (c) 2026 Tim Bode, PGI-12, Forschungszentrum Jülich
 package com.quicopt.planner.impl.score.stream;
 
+import java.lang.reflect.Field;
 import java.lang.reflect.InvocationHandler;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
+import java.lang.reflect.Modifier;
 import java.lang.reflect.Proxy;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -14,11 +16,14 @@ import java.util.Set;
 
 import com.quicopt.planner.api.score.stream.Constraint;
 import com.quicopt.planner.api.score.stream.ConstraintFactory;
+import com.quicopt.planner.api.score.stream.ConstraintMetadata;
 import com.quicopt.planner.api.score.stream.ConstraintProvider;
+import com.quicopt.planner.api.score.stream.ConstraintRef;
 import com.quicopt.planner.api.score.stream.bi.BiConstraintStream;
 import com.quicopt.planner.api.score.stream.tri.TriConstraintStream;
 import com.quicopt.planner.api.score.stream.uni.UniConstraintStream;
 import com.quicopt.planner.config.util.ConfigUtils;
+import com.quicopt.planner.impl.encode.Members;
 import com.quicopt.planner.impl.encode.Refusal;
 import com.quicopt.planner.impl.encode.TaggingClassLoader;
 
@@ -79,22 +84,94 @@ public final class RecordedStreams {
      */
     public static List<Node> record(Class<? extends ConstraintProvider> providerClass,
             Map<String, String> customProperties) {
-        ConstraintProvider provider;
+        var provider = tagged(providerClass);
+        ConfigUtils.applyCustomProperties(provider, "constraintProviderClass", customProperties,
+                "constraintProviderCustomProperties");
+        return recordAll(provider);
+    }
+
+    /**
+     * Records the constraints of a provider object made elsewhere, as a constraint test makes it: a new instance of
+     * its class, made through a {@link TaggingClassLoader}, takes over the values of all its fields first.
+     *
+     * @return one {@code asConstraint} node per constraint, in the provider's order
+     * @throws IllegalArgumentException when the provider's class cannot be instantiated
+     */
+    public static List<Node> record(ConstraintProvider provider) {
+        var copy = tagged(provider.getClass());
+        copyFields(provider, copy);
+        return recordAll(copy);
+    }
+
+    /**
+     * @return a factory whose streams and constraints are recorded, to call a provider's methods on
+     */
+    public static ConstraintFactory factory() {
+        return (ConstraintFactory) recordingProxy(ConstraintFactory.class, null);
+    }
+
+    /**
+     * @param asConstraint a recorded {@code asConstraint} node
+     * @return the id of the constraint it defines, which names it uniquely in its provider
+     */
+    public static String constraintId(Node asConstraint) {
+        return ConstraintRef.of(((ConstraintMetadata) asConstraint.args().get(0)).id()).id();
+    }
+
+    /**
+     * @return a new instance of a provider class, loaded through a {@link TaggingClassLoader} so that the lambdas it
+     *         creates can be traced back to their code
+     * @throws IllegalArgumentException when the class has no constructor without parameters
+     */
+    private static ConstraintProvider tagged(Class<? extends ConstraintProvider> providerClass) {
         try {
             var loader = new TaggingClassLoader(providerClass.getClassLoader(), providerClass.getName());
             var tagged = loader.loadClass(providerClass.getName());
             var constructor = tagged.getDeclaredConstructor();
             constructor.setAccessible(true);
-            provider = (ConstraintProvider) constructor.newInstance();
+            return (ConstraintProvider) constructor.newInstance();
         } catch (ReflectiveOperationException e) {
             throw new IllegalArgumentException("The constraint provider " + providerClass.getName()
                     + " cannot be instantiated through its constructor without parameters.", e);
         }
-        ConfigUtils.applyCustomProperties(provider, "constraintProviderClass", customProperties,
-                "constraintProviderCustomProperties");
-        var factory = (ConstraintFactory) recordingProxy(ConstraintFactory.class, null);
+    }
+
+    /**
+     * Gives a provider's tagged copy the values of the original's instance fields. Only the provider's own class
+     * is loaded anew, so a superclass's fields are the same fields in both.
+     */
+    private static void copyFields(ConstraintProvider original, ConstraintProvider copy) {
+        Class<?> target = copy.getClass();
+        for (Class<?> source = original.getClass(); source != null && source != Object.class;
+                source = source.getSuperclass(), target = target.getSuperclass()) {
+            for (Field field : source.getDeclaredFields()) {
+                if (!Modifier.isStatic(field.getModifiers())) {
+                    Members.write(sameField(target, field), copy, Members.read(field, original));
+                }
+            }
+        }
+    }
+
+    /**
+     * @return the field of a class that has the same name as a field of its counterpart class
+     */
+    private static Field sameField(Class<?> type, Field field) {
+        if (field.getDeclaringClass() == type) {
+            return field;
+        }
+        try {
+            return type.getDeclaredField(field.getName());
+        } catch (NoSuchFieldException e) {
+            throw new IllegalStateException("The provider's copy has no field " + field.getName() + ".", e);
+        }
+    }
+
+    /**
+     * @return one {@code asConstraint} node per constraint of a provider, in the provider's order
+     */
+    private static List<Node> recordAll(ConstraintProvider provider) {
         var constraints = new ArrayList<Node>();
-        for (Constraint constraint : provider.defineConstraints(factory)) {
+        for (Constraint constraint : provider.defineConstraints(factory())) {
             constraints.add(nodeOf(constraint));
         }
         return constraints;

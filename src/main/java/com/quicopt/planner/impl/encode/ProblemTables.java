@@ -182,7 +182,20 @@ public final class ProblemTables {
     record TableInfo(int index, Method method, List<ClassInfo> argClasses, Type result, long[] values) {
     }
 
-    final Object solution;
+    /**
+     * A collection that the solution class declares: its element class, whether it holds entities, and the objects
+     * that are its rows.
+     *
+     * @param type the element class
+     * @param entity whether the collection holds planning entities
+     * @param rows the objects
+     */
+    private record Declared(Class<?> type, boolean entity, List<?> rows) {
+    }
+
+    final Class<?> solutionClass;
+    /** Whether shadow variables are read as the objects hold them, like other fields, instead of being computed. */
+    final boolean shadowsAsData;
     final List<ClassInfo> classes = new ArrayList<>();
     final List<TableInfo> tables = new ArrayList<>();
     private final Map<Class<?>, ClassInfo> byType = new HashMap<>();
@@ -191,24 +204,120 @@ public final class ProblemTables {
     private final Map<Class<?>, java.util.Optional<Class<?>>> reachedEntities = new HashMap<>();
 
     /**
-     * Reads the solution's annotated collections into tables, then the entity classes' genuine and shadow
-     * variables.
+     * Tables for solving: the solution's annotated collections, then the entity classes' genuine and shadow
+     * variables, whose shadow variables the service computes.
      *
      * @param solution an instance of the class with the {@code PlanningSolution} annotation
      */
     public ProblemTables(Object solution) {
-        this.solution = solution;
-        for (Field field : Members.allFields(solution.getClass())) {
-            boolean entity = field.isAnnotationPresent(PlanningEntityCollectionProperty.class);
-            if (entity || field.isAnnotationPresent(ProblemFactCollectionProperty.class)) {
-                addClass(Members.elementClass(field.getGenericType()), entity, rowsOf(field, solution));
-            }
+        this(solution.getClass(), declared(solution), false);
+    }
+
+    /**
+     * Tables for scoring a solution as it stands: as for solving, but every shadow variable is read as the
+     * objects hold it, like any other field, and nothing is computed.
+     *
+     * @param solution an instance of the class with the {@code PlanningSolution} annotation
+     * @return the tables
+     */
+    public static ProblemTables asItStands(Object solution) {
+        return new ProblemTables(solution.getClass(), declared(solution), true);
+    }
+
+    /**
+     * Tables for scoring loose objects, as a constraint test gives them: each object is a row of the collection
+     * class of the solution class that it belongs to, and so is every object of such a class that a row's fields
+     * reference. Shadow variables are read as the objects hold them.
+     *
+     * @param solutionClass the class with the {@code PlanningSolution} annotation
+     * @param objects the objects, in the order they were given
+     * @return the tables
+     */
+    public static ProblemTables ofObjects(Class<?> solutionClass, List<?> objects) {
+        return new ProblemTables(solutionClass, declared(solutionClass, objects), true);
+    }
+
+    /**
+     * Reads the declared collections into tables, then the entity classes' variables.
+     */
+    private ProblemTables(Class<?> solutionClass, List<Declared> declared, boolean shadowsAsData) {
+        this.solutionClass = solutionClass;
+        this.shadowsAsData = shadowsAsData;
+        for (Declared collection : declared) {
+            addClass(collection.type, collection.entity, collection.rows);
         }
         for (ClassInfo info : List.copyOf(classes)) {
             if (info.entity) {
                 Variables.addVariables(this, info);
             }
         }
+    }
+
+    /**
+     * @return the solution's annotated collections, in field order
+     */
+    private static List<Declared> declared(Object solution) {
+        return collectionFields(solution.getClass()).stream().map(field -> new Declared(
+                Members.elementClass(field.getGenericType()),
+                field.isAnnotationPresent(PlanningEntityCollectionProperty.class), rowsOf(field, solution))).toList();
+    }
+
+    /**
+     * The solution class's collections filled with loose objects: each object goes to the first collection, in
+     * field order, whose element class it is an instance of; the objects that a collected object's fields hold
+     * follow, after all given objects. Objects of no collection's class are left out.
+     *
+     * @return the collections, in field order
+     */
+    private static List<Declared> declared(Class<?> solutionClass, List<?> objects) {
+        var fields = collectionFields(solutionClass);
+        var types = fields.stream().<Class<?>> map(field -> Members.elementClass(field.getGenericType())).toList();
+        var rows = types.stream().map(type -> new ArrayList<Object>()).toList();
+        var placed = Collections.newSetFromMap(new IdentityHashMap<Object, Boolean>());
+        var pending = new java.util.ArrayDeque<Object>(objects);
+        while (!pending.isEmpty()) {
+            var object = pending.poll();
+            int c = IntStream.range(0, types.size()).filter(i -> types.get(i).isInstance(object)).findFirst().orElse(-1);
+            if (c >= 0 && placed.add(object)) {
+                rows.get(c).add(object);
+                pending.addAll(referencedObjects(object));
+            }
+        }
+        return IntStream.range(0, types.size()).mapToObj(i -> new Declared(types.get(i),
+                fields.get(i).isAnnotationPresent(PlanningEntityCollectionProperty.class), rows.get(i))).toList();
+    }
+
+    /**
+     * @return the solution class's fields annotated as a collection of entities or of facts, in field order
+     */
+    private static List<Field> collectionFields(Class<?> solutionClass) {
+        return Members.allFields(solutionClass).stream()
+                .filter(field -> field.isAnnotationPresent(PlanningEntityCollectionProperty.class)
+                        || field.isAnnotationPresent(ProblemFactCollectionProperty.class))
+                .toList();
+    }
+
+    /**
+     * @return the objects an object's fields hold, the elements of a collection field included
+     */
+    private static List<Object> referencedObjects(Object object) {
+        var referenced = new ArrayList<Object>();
+        for (Field field : Members.allFields(object.getClass())) {
+            var value = Members.read(field, object);
+            if (value instanceof Collection<?> collection) {
+                collection.stream().filter(java.util.Objects::nonNull).forEach(referenced::add);
+            } else if (value != null) {
+                referenced.add(value);
+            }
+        }
+        return referenced;
+    }
+
+    /**
+     * @return the class with the {@code PlanningSolution} annotation
+     */
+    public Class<?> solutionClass() {
+        return solutionClass;
     }
 
     /**

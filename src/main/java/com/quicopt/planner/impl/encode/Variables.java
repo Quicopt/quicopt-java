@@ -31,7 +31,8 @@ final class Variables {
 
     /**
      * Registers the genuine and shadow variables of an entity class in the order the solver lists them (see
-     * {@link Members#sortedFields}).
+     * {@link Members#sortedFields}), and its pins. When the tables read shadow variables as data, the shadow
+     * variables are left unregistered, so that translated code reads them as plain fields.
      */
     static void addVariables(ProblemTables tables, ProblemTables.ClassInfo info) {
         var fields = Members.sortedFields(info.type);
@@ -49,7 +50,7 @@ final class Variables {
         }
         for (Field field : fields) {
             var shadow = shadowOf(tables, info, field);
-            if (shadow != null) {
+            if (shadow != null && !tables.shadowsAsData) {
                 info.shadows.add(shadow);
             }
         }
