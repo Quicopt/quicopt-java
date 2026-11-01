@@ -1040,6 +1040,30 @@ public final class ProblemTables {
     }
 
     /**
+     * Renumbers the strings by their order: from now on, each string's id is its rank among the strings interned so
+     * far in {@code String.compareTo} order, and the values remembered for scalar variables are keyed by it.
+     *
+     * @return the new id of each old id
+     */
+    long[] rankStrings() {
+        var texts = new ArrayList<>(stringIds.keySet());
+        texts.sort(null);
+        var rankOfId = new long[texts.size()];
+        for (int rank = 0; rank < texts.size(); rank++) {
+            rankOfId[(int) (long) stringIds.get(texts.get(rank))] = rank;
+        }
+        for (int rank = 0; rank < texts.size(); rank++) {
+            stringIds.put(texts.get(rank), (long) rank);
+        }
+        for (var values : scalarValues.values()) {
+            var strings = values.entrySet().stream().filter(e -> e.getValue() instanceof String).toList();
+            strings.forEach(e -> values.remove(e.getKey()));
+            strings.forEach(e -> values.put(rankOfId[(int) (long) e.getKey()], e.getValue()));
+        }
+        return rankOfId;
+    }
+
+    /**
      * @return the interned id of a string; equal strings get equal ids
      */
     long stringId(String value) {

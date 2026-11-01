@@ -89,6 +89,17 @@ class LiveSolveTest {
     }
 
     /**
+     * A filtering joiner in {@code ifNotExists} stays exact while the solver moves meetings: the answer scores what
+     * the solve reported.
+     */
+    @Test
+    void filteringExistsSolveAndRescore() throws Exception {
+        var config = config(MeetingPlan.class, EncoderTest.FilteringExistsConstraints.class, Meeting.class);
+        MeetingPlan solution = SolverFactory.<MeetingPlan> create(config).buildSolver().solve(MeetingPlan.smallWeek());
+        assertEquals(solution.getScore(), rescore(solution, EncoderTest.FilteringExistsConstraints.class));
+    }
+
+    /**
      * A configuration read from XML solves as a programmatic one does: the test file's provider, tuned by its
      * custom property, and its termination (a best score limit of zero) reach the service.
      */

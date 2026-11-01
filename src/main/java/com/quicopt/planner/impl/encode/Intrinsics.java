@@ -54,7 +54,12 @@ final class Intrinsics {
                     "java/util/SortedMap", "java/util/NavigableMap", "java/util/EnumMap" -> map(name, args);
             case "java/lang/Integer", "java/lang/Long", "java/lang/Boolean" -> boxing(name, args);
             case "java/lang/Math" -> math(name, args);
-            case "java/lang/Object", "java/lang/String", "java/lang/Enum", "java/util/Objects" ->
+            case "java/lang/String" -> switch (name) {
+                case "equals" -> equality(args.get(0), args.get(1));
+                case "compareTo" -> ir.apply("cmp", Type.INT, args.get(0), args.get(1));
+                default -> null;
+            };
+            case "java/lang/Object", "java/lang/Enum", "java/util/Objects" ->
                     name.equals("equals") ? equality(args.get(0), args.get(1)) : null;
             case LOAD_BALANCE -> name.equals("unfairness") ? ir.apply("unfairness", Type.BIG_DECIMAL, args.get(0)) : null;
             default -> null;
@@ -186,6 +191,12 @@ final class Intrinsics {
                 var sought = a.get(1).type().kind() == Kind.NULL ? ir.nullOf(element) : a.get(1);
                 equality(new Val(sought.node(), element), sought);
                 yield ir.apply("contains", Type.BOOL, a.get(0), sought);
+            }
+            case "containsAll" -> {
+                var element = requireList(a.get(0)).type().element();
+                var other = requireList(a.get(1)).type().element();
+                equality(new Val(a.get(0).node(), element), new Val(a.get(1).node(), other));
+                yield ir.apply("contains_all", Type.BOOL, a.get(0), a.get(1));
             }
             case "size" -> ir.apply("size", Type.INT, requireList(a.get(0)));
             case "isEmpty" -> ir.apply("eq", Type.BOOL, ir.apply("size", Type.INT, requireList(a.get(0))),

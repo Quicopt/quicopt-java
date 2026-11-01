@@ -286,6 +286,37 @@ final class Lifter implements Opcodes {
     }
 
     /**
+     * Translates {@code a.compareTo(b)} for two rows, as the row class's {@code compareTo} computes it.
+     *
+     * @return the comparison's value, an int whose sign orders the two rows
+     * @throws Refusal when the class has no {@code compareTo} for the other row, or it has no translation
+     */
+    Val compareTo(Val a, Val b) {
+        var type = a.type().refClass().type;
+        Method method = null;
+        for (Class<?> c = type; c != null && method == null; c = c.getSuperclass()) {
+            for (Method m : c.getDeclaredMethods()) {
+                if (m.getName().equals("compareTo") && m.getParameterCount() == 1 && !m.isBridge()
+                        && m.getReturnType() == int.class
+                        && m.getParameterTypes()[0].isAssignableFrom(b.type().refClass().type)) {
+                    method = m;
+                }
+            }
+        }
+        if (method == null) {
+            throw new Refusal("a comparison of " + type.getSimpleName() + " objects, which have no compareTo");
+        }
+        depth = 0;
+        location = "?";
+        try {
+            return call(org.objectweb.asm.Type.getInternalName(method.getDeclaringClass()), "compareTo",
+                    org.objectweb.asm.Type.getMethodDescriptor(method), false, List.of(a, b));
+        } catch (Refusal refusal) {
+            throw located(refusal);
+        }
+    }
+
+    /**
      * Executes a call symbolically.
      *
      * @param args the receiver first for an instance method, then the arguments

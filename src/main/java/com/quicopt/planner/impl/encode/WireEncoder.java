@@ -86,6 +86,7 @@ public final class WireEncoder {
         for (ProblemTables.TableInfo table : tables.tables) {
             problem.addTables(table(table));
         }
+        StringRanks.apply(problem, tables.rankStrings());
         problem.setSolverConfig(solverConfig);
         return problem.build();
     }
@@ -441,6 +442,22 @@ public final class WireEncoder {
                 : column.part() == ProblemTables.MapPart.VALUES ? column.field().getName() + " values"
                 : column.field().getName();
         var wire = Column.newBuilder().setName(name).setValueType(valueType(column.type()));
+        var kind = column.type().kind();
+        if (kind == Type.Kind.DOUBLE || kind == Type.Kind.BIG_DECIMAL) {
+            for (Object row : info.rows) {
+                var value = Members.read(column.field(), row);
+                if (value == null) {
+                    throw new Refusal("the field " + info.type.getSimpleName() + "." + column.field().getName()
+                            + " holding null (a null " + kind + " in a column)");
+                }
+                if (kind == Type.Kind.DOUBLE) {
+                    wire.addDoubles(((Number) value).doubleValue());
+                } else {
+                    wire.addDecimals(ScoreCodec.decimal((java.math.BigDecimal) value));
+                }
+            }
+            return wire.build();
+        }
         var values = tables.columnValues(info, column);
         if (column.type().kind() != Type.Kind.LIST) {
             for (long v : values) {

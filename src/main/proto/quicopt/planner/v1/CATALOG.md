@@ -84,7 +84,7 @@ differs only in `index`.
 | Op | Operands | Result | Java |
 |---|---|---|---|
 | `eq`, `ne` | X, X of one kind | B | `==` and `!=` on the encodings. For REF this is identity, and translators use it for `equals` only where `equals` is identity on the problem's rows. For DOUBLE it is Java's `==` on doubles (NaN differs from itself, 0.0 equals −0.0). For BIG_DECIMAL it is `compareTo(b) == 0`. Null equals null |
-| `lt`, `le`, `gt`, `ge` | N, N or D, D | B | `<`, `<=`, `>`, `>=` on the encodings, which preserve order for every int64-encoded kind except STRING; on reference kinds (`isBefore`, `compareTo`) fails if an operand is null |
+| `lt`, `le`, `gt`, `ge` | N, N or D, D | B | `<`, `<=`, `>`, `>=` on the encodings, which preserve order for every int64-encoded kind (a STRING's encoding is its rank in `String.compareTo` order); on reference kinds (`isBefore`, `compareTo`) fails if an operand is null |
 | `cmp` | N, N of one kind | I | the sign of the comparison of the encodings, −1, 0 or 1, as `Long.compare(a, b)` and the `lcmp` instruction compute it. A translator may use it for `compareTo` only where the result feeds nothing but a comparison with 0, since `LocalDate.compareTo` and `Duration.compareTo` return other magnitudes |
 
 ## Arithmetic
@@ -125,6 +125,7 @@ seconds with truncation.
 |---|---|---|---|
 | `contains` | LIST of E, E | B | `Collection.contains`, by encoding equality; fails on a null list |
 | `contains_any` | LIST of E, LIST of E | B | `!Collections.disjoint(a, b)`: whether the lists share an element, by encoding equality; fails on a null list |
+| `contains_all` | LIST of E, LIST of E | B | `a.containsAll(b)`: whether every element of the second list is in the first, by encoding equality; fails on a null list |
 | `index_of` | LIST of E, E | I | `List.indexOf`: the position of the first element equal to the second operand, by encoding equality, or −1; E is an int64-encoded kind or REF; fails on a null list |
 | `size` | LIST | I | `Collection.size()`; fails on a null list |
 | `get` | LIST of E, I | E | `List.get(i)`; fails on a null list or an index out of bounds |

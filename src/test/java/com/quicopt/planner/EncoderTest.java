@@ -29,6 +29,7 @@ import com.quicopt.planner.testdomain.shifts.ShiftConstraints;
 import com.quicopt.planner.testdomain.shifts.ShiftPlan;
 import com.quicopt.planner.wire.ClassDecl;
 import com.quicopt.planner.wire.Expression;
+import com.quicopt.planner.wire.JoinerType;
 import com.quicopt.planner.wire.PlanningProblem;
 import com.quicopt.planner.wire.ShadowKind;
 import com.quicopt.planner.wire.SolverConfig;
@@ -266,7 +267,7 @@ class EncoderTest {
 
     /**
      * A filtering joiner in a join goes out as a filter on the joined pairs, after the join's other joiners; one in
-     * {@code ifNotExists} is refused by name.
+     * {@code ifNotExists} goes out as a filtering joiner of that node.
      */
     @Test
     void filteringJoinersFilterTheJoinedPairs() {
@@ -276,8 +277,9 @@ class EncoderTest {
                 .orElseThrow());
         assertEquals(1, streams.get(join).getJoinersCount() - 1); // equal(slot), then the rank comparison
         assertTrue(streams.stream().anyMatch(s -> s.getKind() == StreamKind.FILTER && s.getInput() == join));
-        var refusal = assertThrows(Refusal.class, () -> encode(MeetingPlan.smallWeek(), FilteringExistsConstraints.class));
-        assertTrue(refusal.getMessage().contains("a filtering joiner in ifExists or ifNotExists"));
+        var exists = encode(MeetingPlan.smallWeek(), FilteringExistsConstraints.class).getStreamsList().stream()
+                .filter(s -> s.getKind() == StreamKind.IF_NOT_EXISTS).findFirst().orElseThrow();
+        assertEquals(List.of(JoinerType.FILTERING), exists.getJoinersList().stream().map(j -> j.getJoinerType()).toList());
     }
 
     /**

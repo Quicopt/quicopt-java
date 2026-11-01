@@ -393,12 +393,16 @@ final class StreamEncoder {
     }
 
     /**
-     * @return the joiners inside one joiner object, their key functions translated over the two sides' tuples
-     * @throws Refusal for a filtering joiner, which only a join can apply (as a filter after it)
+     * @return the joiners inside one joiner object, their key functions translated over the two sides' tuples; a
+     *         filtering joiner's predicate is translated over the joined tuple, the left side's elements first
      */
     private List<Joiner> joiners(Object joiner, List<Type> left, List<Type> right) {
-        if (filterOf(joiner) != null) {
-            throw new Refusal("a filtering joiner in ifExists or ifNotExists");
+        var predicate = filterOf(joiner);
+        if (predicate != null) {
+            var joined = new ArrayList<>(left);
+            joined.addAll(right);
+            var test = lifter.lift(predicate, joined);
+            return List.of(Joiner.newBuilder().setJoinerType(JoinerType.FILTERING).setFilter(test.node()).build());
         }
         if (!(joiner instanceof AbstractJoiner<?> keyed)) {
             throw new Refusal("the joiner " + joiner.getClass().getSimpleName() + " (only equal and comparison joiners"
@@ -415,6 +419,9 @@ final class StreamEncoder {
             var rightKey = lifter.lift(keyed.getRightMapping(i), right);
             if (type == JoinerType.EQUAL) {
                 lifter.requireEqualityById(leftKey, rightKey);
+            } else if (leftKey.type().kind() == Type.Kind.REF) {
+                result.add(comparedRows(type, leftMapping(joiner, i), keyed.getRightMapping(i), left, right));
+                continue;
             }
             result.add(Joiner.newBuilder().setJoinerType(type).setLeft(leftKey.node()).setRight(rightKey.node()).build());
         }
@@ -441,6 +448,27 @@ final class StreamEncoder {
             case CONTAINED_IN -> ir.apply("contains", Type.BOOL, rightValue, leftValue);
             default -> ir.apply("contains_any", Type.BOOL, leftValue, rightValue);
         };
+        return Joiner.newBuilder().setJoinerType(JoinerType.FILTERING).setFilter(test.node()).build();
+    }
+
+    /**
+     * A comparison joiner whose keys are rows, sent as a filtering joiner over the joined tuple: the left key's
+     * {@code compareTo} of the right key, compared with zero as the joiner type says.
+     *
+     * @return the filtering joiner
+     */
+    private Joiner comparedRows(JoinerType type, Object leftMapping, Object rightMapping, List<Type> left,
+            List<Type> right) {
+        var leftKey = lifter.lift(leftMapping, left);
+        var rightKey = lifter.lift(rightMapping, right, left.size());
+        var order = lifter.compareTo(leftKey, rightKey);
+        var op = switch (type) {
+            case LESS_THAN -> "lt";
+            case LESS_THAN_OR_EQUAL -> "le";
+            case GREATER_THAN -> "gt";
+            default -> "ge";
+        };
+        var test = ir.apply(op, Type.BOOL, order, ir.constant(Type.INT, 0));
         return Joiner.newBuilder().setJoinerType(JoinerType.FILTERING).setFilter(test.node()).build();
     }
 

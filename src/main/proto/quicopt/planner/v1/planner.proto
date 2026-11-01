@@ -54,7 +54,9 @@ option java_multiple_files = true;
 //   BOOL          0 or 1
 //   INT           a Java int; arithmetic on it wraps at 32 bits
 //   LONG          a Java long
-//   STRING        an id: equal strings have equal ids. When
+//   STRING        the string's rank among the problem's strings in
+//                 String.compareTo order: equal strings have equal ids, and
+//                 ids compare as the strings do. When
 //                 PlanningProblem.strings is not empty, the id indexes it.
 //   ENUM          the constant's ordinal
 //   DATE          days since 1970-01-01 (LocalDate.toEpochDay)
@@ -128,8 +130,8 @@ message PlanningProblem {
   repeated ConstraintDecl constraints = 5; // in the constraint provider's order
   repeated LookupTable tables = 6;         // index = table id
   repeated string strings = 7;             // the text of STRING ids, when an
-                                           // operator needs text (ordering);
-                                           // empty otherwise
+                                           // operator needs text; empty
+                                           // otherwise
   SolverConfig solver_config = 8;
 }
 
