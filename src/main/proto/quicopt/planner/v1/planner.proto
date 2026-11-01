@@ -376,8 +376,12 @@ enum CollectorKind {
   COLLECT_COUNT = 1;          // the number of input tuples (LONG)
   COLLECT_COUNT_DISTINCT = 2; // the number of distinct values of functions[0] (LONG)
   COLLECT_SUM = 3;            // the sum of functions[0], in its kind
-  COLLECT_MIN = 4;            // the least value of functions[0]
-  COLLECT_MAX = 5;            // the greatest value of functions[0]
+  // MIN and MAX: functions = [value], or [item, property]. The result is the
+  // least (greatest) value, or the item with the least (greatest) property;
+  // among items with that property, the one whose first tuple arrived first.
+  // A null value or property fails.
+  COLLECT_MIN = 4;
+  COLLECT_MAX = 5;
   COLLECT_AVERAGE = 6;        // the average of functions[0] (DOUBLE)
   COLLECT_TO_LIST = 7;        // the values of functions[0] (LIST)
   COLLECT_TO_SET = 8;         // the distinct values of functions[0] (LIST)

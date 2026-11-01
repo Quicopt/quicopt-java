@@ -283,19 +283,53 @@ final class StreamEncoder {
         var wire = StreamNode.newBuilder().setKind(StreamKind.GROUP_BY).setInput(input);
         var keys = new ArrayList<Type>();
         var results = new ArrayList<Type>();
+        var collectors = new ArrayList<CollectorEncoder.Encoded>();
         for (Object arg : node.args()) {
             if (CollectorEncoder.isCollector(arg)) {
-                var collector = CollectorEncoder.encode(arg, inputTuple, lifter);
-                wire.addCollectors(collector.wire());
-                results.add(collector.result());
+                var collector = CollectorEncoder.encode(arg, inputTuple, lifter, ir);
+                collectors.add(collector);
+                for (var single : CollectorEncoder.wireCollectors(collector)) {
+                    wire.addCollectors(single.wire());
+                    results.add(single.result());
+                }
             } else {
                 var key = lifter.lift(arg, inputTuple);
                 wire.addFunctions(key.node());
                 keys.add(key.type());
             }
         }
+        int keyCount = keys.size();
         keys.addAll(results);
-        return add(wire, keys);
+        int grouped = add(wire, keys);
+        if (collectors.stream().allMatch(c -> c instanceof CollectorEncoder.Single)) {
+            return grouped;
+        }
+        return finished(grouped, keyCount, collectors);
+    }
+
+    /**
+     * @return a map over a grouping's tuples that keeps its keys and replaces the results of the wire collectors
+     *         that a combining collector made by the combined result
+     */
+    private int finished(int grouped, int keyCount, List<CollectorEncoder.Encoded> collectors) {
+        var groupTuple = tuples.get(grouped);
+        var map = StreamNode.newBuilder().setKind(StreamKind.MAP).setInput(grouped);
+        var mapped = new ArrayList<Type>();
+        for (int i = 0; i < keyCount; i++) {
+            map.addFunctions(arg(groupTuple.get(i), i).node());
+            mapped.add(groupTuple.get(i));
+        }
+        var results = new ArrayList<Ir.Val>();
+        for (int i = keyCount; i < groupTuple.size(); i++) {
+            results.add(arg(groupTuple.get(i), i));
+        }
+        var remaining = results.iterator();
+        for (var collector : collectors) {
+            var value = CollectorEncoder.value(collector, remaining, lifter);
+            map.addFunctions(value.node());
+            mapped.add(value.type());
+        }
+        return add(map, mapped);
     }
 
     /**

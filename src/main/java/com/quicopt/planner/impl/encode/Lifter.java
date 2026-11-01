@@ -129,14 +129,25 @@ final class Lifter implements Opcodes {
      * @throws Refusal naming the source line when some construct has no translation
      */
     Val lift(Object lambda, List<Type> tuple, int first) {
-        depth = 0;
-        location = "?";
         var elements = new ArrayList<Val>();
         for (int position = 0; position < tuple.size(); position++) {
             var type = tuple.get(position);
             elements.add(ir.add("arg", List.of(), type, type.refClass() == null ? 0 : type.refClass().id,
                     first + position, 0));
         }
+        return liftApplied(lambda, elements);
+    }
+
+    /**
+     * Translates a function applied to values that are expressions already, such as a collector's property
+     * function applied to the item it ranks, or a finisher applied to the results of the collectors it combines.
+     *
+     * @return the function's value as an expression
+     * @throws Refusal naming the source line when some construct has no translation
+     */
+    Val liftApplied(Object lambda, List<Val> elements) {
+        depth = 0;
+        location = "?";
         var known = knownLambdas.translate(lambda, elements, ir);
         if (known != null) {
             return known;
