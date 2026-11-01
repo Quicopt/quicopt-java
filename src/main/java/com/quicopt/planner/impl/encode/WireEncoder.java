@@ -142,7 +142,44 @@ public final class WireEncoder {
             }
         }
         info.shadows.forEach(shadow -> decl.addShadows(shadows.get(shadow)));
+        decl.addAllPinned(pinned(info));
         return decl.build();
+    }
+
+    /**
+     * Which rows the solver must leave as they are: those whose {@code @PlanningPin} is true. An entity with a
+     * {@code @PlanningPinToIndex} above 0 counts as pinned too, only to be refused.
+     *
+     * @return one flag per row, or an empty list when no row is pinned
+     * @throws Refusal for a pinned entity in a model with a list variable, which the service cannot keep in place yet
+     * @throws IllegalStateException for a {@code @PlanningPin} that is null, as the solver API throws
+     */
+    private List<Boolean> pinned(ClassInfo info) {
+        var pinned = new ArrayList<Boolean>(info.rows.size());
+        for (Object row : info.rows) {
+            pinned.add(info.pins.stream().anyMatch(pin -> isPinned(pin, row)));
+        }
+        if (!pinned.contains(true)) {
+            return List.of();
+        }
+        if (tables.classes.stream().flatMap(c -> c.variables.stream()).anyMatch(ProblemTables.VariableInfo::list)) {
+            throw new Refusal("a pinned " + info.type.getSimpleName() + " in a model with a list variable, which"
+                    + " cannot be kept in place yet");
+        }
+        return pinned;
+    }
+
+    /**
+     * @return whether one pin holds an entity in place
+     * @throws IllegalStateException for a {@code @PlanningPin} that is null
+     */
+    private static boolean isPinned(ProblemTables.Pin pin, Object entity) {
+        var value = pin.read().apply(entity);
+        if (value == null) {
+            throw new IllegalStateException("The entity " + entity + " has a @PlanningPin member (" + pin.name()
+                    + ") that is null.");
+        }
+        return pin.toIndex() ? (Integer) value > 0 : (Boolean) value;
     }
 
     /**

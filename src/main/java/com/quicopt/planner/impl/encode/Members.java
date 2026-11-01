@@ -3,6 +3,8 @@
 package com.quicopt.planner.impl.encode;
 
 import java.lang.reflect.Field;
+import java.lang.reflect.InvocationTargetException;
+import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
 import java.lang.reflect.ParameterizedType;
 import java.util.ArrayList;
@@ -81,6 +83,22 @@ public final class Members {
             return field.get(target);
         } catch (IllegalAccessException e) {
             throw new IllegalStateException("Cannot read the field " + field.getName(), e);
+        }
+    }
+
+    /**
+     * @return what a method without parameters returns, private or not
+     * @throws IllegalStateException when the method cannot be called, or throws
+     */
+    public static Object call(Method method, Object target) {
+        try {
+            method.setAccessible(true);
+            return method.invoke(target);
+        } catch (IllegalAccessException e) {
+            throw new IllegalStateException("Cannot call the method " + method.getName(), e);
+        } catch (InvocationTargetException e) {
+            throw new IllegalStateException("The method " + method.getName() + " failed on " + target + ".",
+                    e.getCause());
         }
     }
 

@@ -180,6 +180,33 @@ class EncoderTest {
     }
 
     /**
+     * A pinned meeting is marked on its row, and the marks are sent only when some meeting is pinned.
+     */
+    @Test
+    void pinnedMeetingsAreMarked() {
+        var plan = MeetingPlan.smallWeek();
+        assertTrue(encode(plan, MeetingConstraints.class).getClasses(2).getPinnedList().isEmpty());
+        plan.getMeetings().get(1).pin();
+        assertEquals(List.of(false, true, false, false, false, false, false, false),
+                encode(plan, MeetingConstraints.class).getClasses(2).getPinnedList());
+    }
+
+    /**
+     * A route cannot be kept in place yet, so a pinned courier is refused, and so is one whose first stops are
+     * pinned.
+     */
+    @Test
+    void pinnedRoutesAreRefused() {
+        var pinned = RoutePlan.smallTown();
+        pinned.getCouriers().get(0).pin();
+        var refusal = assertThrows(Refusal.class, () -> encode(pinned, RouteConstraints.class));
+        assertTrue(refusal.getMessage().contains("pinned Courier"), refusal.getMessage());
+        var pinnedStops = RoutePlan.smallTown();
+        pinnedStops.getCouriers().get(0).fixStops(1);
+        assertThrows(Refusal.class, () -> encode(pinnedStops, RouteConstraints.class));
+    }
+
+    /**
      * A constraint whose filter is random, which no solver could score.
      */
     public static class RandomConstraints implements ConstraintProvider {

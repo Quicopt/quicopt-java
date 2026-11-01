@@ -21,6 +21,7 @@ import java.util.HashSet;
 import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.function.Function;
 import java.util.stream.IntStream;
 
 import com.quicopt.planner.api.domain.common.PlanningId;
@@ -46,6 +47,7 @@ public final class ProblemTables {
         final List<VariableInfo> variables = new ArrayList<>();
         final List<ShadowInfo> shadows = new ArrayList<>();
         final List<ColumnInfo> columns = new ArrayList<>();
+        final List<Pin> pins = new ArrayList<>();
         private Map<Object, Integer> rowOfPlanningId;
 
         /**
@@ -143,6 +145,17 @@ public final class ProblemTables {
      *        every list)
      */
     public record VariableInfo(int index, Field field, ClassInfo valueClass, boolean list, boolean allowsUnassigned) {
+    }
+
+    /**
+     * A field or getter that pins an entity: with {@code @PlanningPin}, a boolean that keeps the whole entity as it
+     * is; with {@code @PlanningPinToIndex}, an int that keeps its list as it is up to that index.
+     *
+     * @param name the member's name, for messages
+     * @param toIndex whether it is a {@code @PlanningPinToIndex}
+     * @param read reads the member of an entity
+     */
+    record Pin(String name, boolean toIndex, Function<Object, Object> read) {
     }
 
     /**

@@ -7,6 +7,8 @@ import java.util.List;
 
 import com.quicopt.planner.api.domain.common.PlanningId;
 import com.quicopt.planner.api.domain.entity.PlanningEntity;
+import com.quicopt.planner.api.domain.entity.PlanningPin;
+import com.quicopt.planner.api.domain.entity.PlanningPinToIndex;
 import com.quicopt.planner.api.domain.variable.PlanningListVariable;
 
 /**
@@ -23,6 +25,10 @@ public class Courier {
 
     @PlanningListVariable
     private List<Stop> stops = new ArrayList<>();
+    @PlanningPin
+    private boolean pinned;
+    @PlanningPinToIndex
+    private int fixedStops;
 
     /**
      * For the planning clone.
@@ -91,6 +97,22 @@ public class Courier {
      */
     public List<Stop> getStops() {
         return stops;
+    }
+
+    /**
+     * Keeps the whole route as it is.
+     */
+    public void pin() {
+        this.pinned = true;
+    }
+
+    /**
+     * Keeps the first stops of the route as they are.
+     *
+     * @param count how many stops, from the start of the route
+     */
+    public void fixStops(int count) {
+        this.fixedStops = count;
     }
 
     @Override

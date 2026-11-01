@@ -2,8 +2,13 @@
 // SPDX-FileCopyrightText: (c) 2026 Tim Bode, PGI-12, Forschungszentrum Jülich
 package com.quicopt.planner.impl.encode;
 
+import java.lang.reflect.AnnotatedElement;
 import java.lang.reflect.Field;
+import java.lang.reflect.Method;
+import java.util.function.Function;
 
+import com.quicopt.planner.api.domain.entity.PlanningPin;
+import com.quicopt.planner.api.domain.entity.PlanningPinToIndex;
 import com.quicopt.planner.api.domain.variable.CascadingUpdateShadowVariable;
 import com.quicopt.planner.api.domain.variable.IndexShadowVariable;
 import com.quicopt.planner.api.domain.variable.InverseRelationShadowVariable;
@@ -14,7 +19,7 @@ import com.quicopt.planner.api.domain.variable.PreviousElementShadowVariable;
 import com.quicopt.planner.api.domain.variable.ShadowVariable;
 
 /**
- * Reads an entity class's genuine and shadow variables from its annotations.
+ * Reads an entity class's genuine and shadow variables, and the members that pin its entities, from its annotations.
  */
 final class Variables {
 
@@ -47,6 +52,57 @@ final class Variables {
             if (shadow != null) {
                 info.shadows.add(shadow);
             }
+        }
+        addPins(info);
+    }
+
+    /**
+     * Registers the fields and getters, of the class or a superclass, that pin its entities.
+     *
+     * @throws Refusal for a pin of the wrong type, or a {@code @PlanningPinToIndex} on a class without a list
+     *         variable, which the solver API refuses too
+     */
+    private static void addPins(ProblemTables.ClassInfo info) {
+        for (Class<?> c = info.type; c != null && c != Object.class; c = c.getSuperclass()) {
+            for (Field field : c.getDeclaredFields()) {
+                addPin(info, field, field.getName(), field.getType(), entity -> Members.read(field, entity));
+            }
+            for (Method method : c.getDeclaredMethods()) {
+                if (method.getParameterCount() == 0) {
+                    addPin(info, method, method.getName() + "()", method.getReturnType(),
+                            entity -> Members.call(method, entity));
+                }
+            }
+        }
+    }
+
+    /**
+     * Registers one member if it pins: a {@code @PlanningPin} boolean or a {@code @PlanningPinToIndex} int.
+     *
+     * @param member the field or getter
+     * @param name its name, for messages
+     * @param type the type it holds or returns
+     * @param read reads it from an entity
+     * @throws Refusal for a pin of the wrong type, or a {@code @PlanningPinToIndex} on a class without a list
+     *         variable
+     */
+    private static void addPin(ProblemTables.ClassInfo info, AnnotatedElement member, String name, Class<?> type,
+            Function<Object, Object> read) {
+        String where = name + " of " + info.type.getSimpleName();
+        if (member.isAnnotationPresent(PlanningPin.class)) {
+            if (type != boolean.class && type != Boolean.class) {
+                throw new Refusal("the @PlanningPin member " + where + ", which is not a boolean");
+            }
+            info.pins.add(new ProblemTables.Pin(name, false, read));
+        }
+        if (member.isAnnotationPresent(PlanningPinToIndex.class)) {
+            if (type != int.class) {
+                throw new Refusal("the @PlanningPinToIndex member " + where + ", which is not an int");
+            }
+            if (info.variables.stream().noneMatch(ProblemTables.VariableInfo::list)) {
+                throw new Refusal("the @PlanningPinToIndex member " + where + ", a class without a list variable");
+            }
+            info.pins.add(new ProblemTables.Pin(name, true, read));
         }
     }
 

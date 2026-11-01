@@ -4,6 +4,7 @@ package com.quicopt.planner.testdomain.meetings;
 
 import com.quicopt.planner.api.domain.common.PlanningId;
 import com.quicopt.planner.api.domain.entity.PlanningEntity;
+import com.quicopt.planner.api.domain.entity.PlanningPin;
 import com.quicopt.planner.api.domain.variable.PlanningVariable;
 
 /**
@@ -21,6 +22,8 @@ public class Meeting {
     private Slot slot;
     @PlanningVariable
     private Room room;
+    @PlanningPin
+    private boolean pinned;
 
     /**
      * For the planning clone.
@@ -80,6 +83,13 @@ public class Meeting {
     public void place(Slot slot, Room room) {
         this.slot = slot;
         this.room = room;
+    }
+
+    /**
+     * Keeps the meeting where it is: the solver will not change its slot or room.
+     */
+    public void pin() {
+        this.pinned = true;
     }
 
     @Override

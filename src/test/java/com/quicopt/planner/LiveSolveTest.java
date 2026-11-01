@@ -6,6 +6,8 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNotSame;
+import static org.junit.jupiter.api.Assertions.assertSame;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.net.URI;
 import java.net.http.HttpClient;
@@ -74,6 +76,28 @@ class LiveSolveTest {
         MeetingPlan solution = factory.buildSolver().solve(MeetingPlan.smallWeek());
         assertEquals(0, solution.getScore().hardScore());
         solution.getMeetings().forEach(meeting -> assertNotNull(meeting.getRoom()));
+    }
+
+    /**
+     * Two meetings pinned into the same small room at the same time stay there, although that costs hard points:
+     * the solver leaves pinned meetings as they are.
+     */
+    @Test
+    void pinnedMeetingsStay() {
+        var problem = MeetingPlan.smallWeek();
+        var slot = problem.getSlots().get(0);
+        var room = problem.getRooms().get(0);
+        for (Meeting meeting : problem.getMeetings().subList(0, 2)) {
+            meeting.place(slot, room);
+            meeting.pin();
+        }
+        var config = config(MeetingPlan.class, MeetingConstraints.class, Meeting.class);
+        MeetingPlan solution = SolverFactory.<MeetingPlan> create(config).buildSolver().solve(problem);
+        for (Meeting meeting : solution.getMeetings().subList(0, 2)) {
+            assertSame(slot, meeting.getSlot());
+            assertSame(room, meeting.getRoom());
+        }
+        assertTrue(solution.getScore().hardScore() < 0, solution.getScore()::toString);
     }
 
     /**
