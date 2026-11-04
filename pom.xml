@@ -5,7 +5,7 @@
 
   <groupId>com.quicopt</groupId>
   <artifactId>quicopt-planner</artifactId>
-  <version>0.1.0-SNAPSHOT</version>
+  <version>0.1.0-beta.1</version>
   <name>quicopt-planner</name>
   <description>A planning solver for Java: annotate the domain, write constraint streams, and the Quicopt
     service solves the model.</description>
