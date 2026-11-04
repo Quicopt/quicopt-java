@@ -28,7 +28,7 @@ import com.quicopt.planner.wire.SolveStats;
 final class PlannerService {
 
     /** The address used when none is configured: the Quicopt service. */
-    static final String DEFAULT_BASE_URL = "https://try.quicoptapi.pgi.fz-juelich.de";
+    static final String DEFAULT_BASE_URL = "https://quicoptapi.pgi.fz-juelich.de";
 
     private static final System.Logger LOGGER = System.getLogger(PlannerService.class.getName());
 
