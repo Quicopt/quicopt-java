@@ -62,6 +62,7 @@ class PlannerServiceTest {
             assertTrue(refusal.getMessage().contains("answered 401: planner requests need an API key"),
                     refusal::getMessage);
             assertTrue(refusal.getMessage().contains("quicopt.apiKey"), refusal::getMessage);
+            assertTrue(refusal.getMessage().contains("https://quicopt.com/signup"), refusal::getMessage);
         } finally {
             System.clearProperty("quicopt.apiKey");
             if (baseUrl == null) {

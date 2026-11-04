@@ -141,7 +141,7 @@ final class PlannerService {
         message.append(": ").append(error != null ? error : body.strip());
         if ("missing_key".equals(reason) || "invalid_key".equals(reason)) {
             message.append(". Set the system property quicopt.apiKey, or the environment variable QUICOPT_API_KEY, "
-                    + "to your API key.");
+                    + "to your API key. Register at https://quicopt.com/signup to receive one by email.");
         }
         return new IllegalStateException(message.toString());
     }
