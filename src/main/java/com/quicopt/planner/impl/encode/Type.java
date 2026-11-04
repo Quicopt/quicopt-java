@@ -132,7 +132,7 @@ public record Type(Kind kind, ProblemTables.ClassInfo refClass, Type element, Cl
     }
 
     /**
-     * @return a short name, for messages
+     * @return the type's name as the model's Java source writes it, for messages
      */
     @Override
     public String toString() {
@@ -142,8 +142,11 @@ public record Type(Kind kind, ProblemTables.ClassInfo refClass, Type element, Cl
             case MAP -> "Map<" + element + ", " + value + ">";
             case SEQUENCE_CHAIN -> "SequenceChain<" + element + ">";
             case SEQUENCE -> "Sequence<" + element + ">";
-            case ENUM, OBJECT -> javaType.getSimpleName();
-            default -> kind.toString();
+            case ITERATOR -> "Iterator<" + element + ">";
+            case LOAD_BALANCE -> "LoadBalance";
+            case NULL -> "null";
+            case DATETIME -> "LocalDateTime";
+            default -> javaType.getSimpleName();
         };
     }
 }

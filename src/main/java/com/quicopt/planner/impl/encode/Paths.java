@@ -161,7 +161,7 @@ final class Paths {
             locals[slot] = mergeValue(condition, taken.locals[slot], notTaken.locals[slot]);
         }
         if (taken.stack.size() != notTaken.stack.size()) {
-            throw new Refusal("operand stacks of different depths where branches join");
+            throw Refusal.untranslatable("branches that leave different numbers of values behind", null);
         }
         var stack = new ArrayList<Val>();
         for (int i = 0; i < taken.stack.size(); i++) {
@@ -169,7 +169,8 @@ final class Paths {
             var b = notTaken.stack.get(i);
             var merged = mergeValue(condition, a, b);
             if (merged == null) {
-                throw new Refusal("a value that is a " + a.type() + " or a " + b.type() + ", depending on a branch");
+                throw Refusal.untranslatable("a conditional whose value is a " + a.type() + " on one branch and a "
+                        + b.type() + " on the other", "Give both branches values of the same type.");
             }
             stack.add(merged);
         }
@@ -219,7 +220,7 @@ final class Paths {
             return known;
         }
         var value = switch (point.next) {
-            case null -> throw new Refusal("a path that neither returns nor throws");
+            case null -> throw Refusal.untranslatable("a path through the code that neither returns nor throws", null);
             case End end -> end.value();
             case Join join -> valueAt(join.point(), memo);
             case Split split -> choose(split.condition(), valueAt(split.taken(), memo),
@@ -238,7 +239,9 @@ final class Paths {
             if (a.known() == b.known()) {
                 return a;
             }
-            throw new Refusal("an object that depends on a branch: " + a.type() + " or " + b.type());
+            throw Refusal.untranslatable("choosing between two objects by a condition (a " + a.type() + " or a "
+                    + b.type() + ")", "Call each object's method in its own branch instead, so that each branch"
+                    + " computes a value.");
         }
         return ir.choose(condition, a, b);
     }

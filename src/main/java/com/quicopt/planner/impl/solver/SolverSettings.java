@@ -89,7 +89,7 @@ final class SolverSettings {
         var scoring = config.getScoreDirectorFactoryConfig();
         if (scoring != null && (scoring.getEasyScoreCalculatorClass() != null
                 || scoring.getIncrementalScoreCalculatorClass() != null)) {
-            throw new Refusal("a score calculator class: only a constraint provider can be sent to the service");
+            throw new Refusal("the service needs a constraint provider, and cannot run a score calculator class");
         }
         if (scoring == null || scoring.getConstraintProviderClass() == null) {
             throw new IllegalArgumentException("The solver configuration has no constraintProviderClass;"
@@ -107,18 +107,20 @@ final class SolverSettings {
      */
     static void refuseUnsupported(SolverConfig config) {
         if (config.getPhaseConfigList() != null && !config.getPhaseConfigList().isEmpty()) {
-            throw new Refusal("configured phases: the service runs the default phases only, so far");
+            throw new Refusal("the service runs its default phases only, so far, not configured phases");
         }
         if (Boolean.TRUE.equals(config.getDaemon())) {
-            throw new Refusal("daemon mode: the service runs each solve to its termination, so far");
+            throw new Refusal("the service runs each solve to its termination, so far, not in daemon mode");
         }
         if (config.getEnablePreviewFeatureSet() != null && !config.getEnablePreviewFeatureSet().isEmpty()) {
-            throw new Refusal("preview features " + config.getEnablePreviewFeatureSet() + ": none is run yet");
+            throw new Refusal("the service runs no preview features yet, but the configuration enables "
+                    + config.getEnablePreviewFeatureSet());
         }
         var monitoring = config.getMonitoringConfig();
         if (monitoring != null && monitoring.getSolverMetricList() != null
                 && !monitoring.getSolverMetricList().isEmpty()) {
-            throw new Refusal("solver metrics " + monitoring.getSolverMetricList() + ": none is published yet");
+            throw new Refusal("the service publishes no solver metrics yet, but the configuration asks for "
+                    + monitoring.getSolverMetricList());
         }
         var threads = config.getMoveThreadCount();
         if (threads != null && !threads.equals(SolverConfig.MOVE_THREAD_COUNT_NONE)) {
@@ -138,10 +140,11 @@ final class SolverSettings {
      */
     private static void refuseUnsupported(ScoreDirectorFactoryConfig scoring) {
         if (scoring.getInitializingScoreTrend() != null) {
-            throw new Refusal("an initializing score trend: the service's construction does not read one");
+            throw new Refusal("the service's construction does not read an initializing score trend");
         }
         if (scoring.getAssertionScoreDirectorFactory() != null) {
-            throw new Refusal("an assertion score director factory: the service asserts with its own scoring");
+            throw new Refusal("the service does not run an assertion score director factory; it asserts with its own"
+                    + " scoring");
         }
     }
 
@@ -199,14 +202,15 @@ final class SolverSettings {
      */
     static Termination termination(TerminationConfig config, Class<?> scoreClass, boolean background) {
         if (config == null || !config.isConfigured()) {
-            throw new Refusal("a solver without a termination: configure one, such as withTerminationSpentLimit()");
+            throw new Refusal("the solver configuration has no termination",
+                    "Configure one, such as withTerminationSpentLimit(Duration.ofSeconds(30)).");
         }
         refuseUnsupported(config);
         var spent = config.calculateTimeMillisSpentLimit();
         var unimproved = config.calculateUnimprovedTimeMillisSpentLimit();
         if (spent == null && unimproved == null && !background) {
-            throw new Refusal("a termination without a time limit: a solve on the service needs a spent limit"
-                    + " or an unimproved spent limit");
+            throw new Refusal("a solve on the service needs a time limit, but the termination has none",
+                    "Set a spent limit or an unimproved spent limit.");
         }
         var wire = Termination.newBuilder();
         if (spent != null) {
@@ -226,25 +230,24 @@ final class SolverSettings {
      */
     private static void refuseUnsupported(TerminationConfig config) {
         if (config.getTerminationConfigList() != null && !config.getTerminationConfigList().isEmpty()) {
-            throw new Refusal("nested terminations (terminationConfigList): one termination, so far");
+            throw new Refusal("the service runs one termination, so far, not nested ones (terminationConfigList)");
         }
         if (config.getTerminationCompositionStyle() == TerminationCompositionStyle.AND) {
-            throw new Refusal("a termination composition style of AND: the limits of a termination are combined"
-                    + " by OR, so far");
+            throw new Refusal("the service combines the limits of a termination by OR, so far, not by AND");
         }
         if (config.getDiminishedReturnsConfig() != null) {
-            throw new Refusal("a diminished returns termination");
+            throw new Refusal("the service does not run a diminished returns termination yet");
         }
         if (config.getUnimprovedScoreDifferenceThreshold() != null) {
-            throw new Refusal("an unimproved score difference threshold");
+            throw new Refusal("the service does not run an unimproved score difference threshold yet");
         }
         if (config.getScoreCalculationCountLimit() != null) {
-            throw new Refusal("a score calculation count limit: the service counts moves, not score calculations;"
-                    + " use a move count limit");
+            throw new Refusal("the service counts moves, not score calculations, so it cannot run a score"
+                    + " calculation count limit", "Use a move count limit instead.");
         }
         if (config.getStepCountLimit() != null || config.getUnimprovedStepCountLimit() != null) {
-            throw new Refusal("a step count limit on the solver: it belongs to a phase, and configured phases are"
-                    + " not run yet");
+            throw new Refusal("a step count limit belongs to a phase, and the service does not run configured"
+                    + " phases yet");
         }
     }
 

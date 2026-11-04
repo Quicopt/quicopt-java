@@ -113,8 +113,8 @@ final class ValueRanges {
             for (String ref : refs) {
                 var provider = onSolution.stream().filter(p -> p.id().equals(ref)).findFirst()
                         .or(() -> onEntity.stream().filter(p -> p.id().equals(ref)).findFirst())
-                        .orElseThrow(() -> new Refusal("the value range provider " + ref + " of the variable "
-                                + variable.field().getName() + ", which no @ValueRangeProvider has as its id"));
+                        .orElseThrow(() -> new Refusal("the variable " + variable.field().getName() + " names the"
+                                + " value range provider " + ref + ", but no @ValueRangeProvider has that id"));
                 named.add(provider);
             }
             return named;
@@ -129,8 +129,9 @@ final class ValueRanges {
             }
         }
         if (anonymous.isEmpty()) {
-            throw new Refusal("the variable " + variable.field().getName()
-                    + ", which names no value range provider and matches none by type");
+            throw new Refusal("the variable " + variable.field().getName() + " names no value range provider and"
+                    + " matches none by type", "Name one with valueRangeProviderRefs, or add a @ValueRangeProvider"
+                    + " whose values have the variable's type.");
         }
         return anonymous;
     }
@@ -202,7 +203,7 @@ final class ValueRanges {
     private static List<Object> valuesOf(Provider provider, Object target) {
         var value = provider.read().apply(target);
         if (value == null) {
-            throw new Refusal("the value range provider " + provider.name() + ", which returned null");
+            throw new Refusal("the value range provider " + provider.name() + " returned null");
         }
         if (value instanceof Collection<?> collection) {
             return new ArrayList<>(collection);
@@ -219,14 +220,15 @@ final class ValueRanges {
         }
         if (value instanceof ValueRange<?> range) {
             if (range.getSize() > MAX_VALUES) {
-                throw new Refusal("the value range provider " + provider.name() + ", whose " + range.getSize()
-                        + " values are more than " + MAX_VALUES);
+                throw new Refusal("the value range provider " + provider.name() + " gives " + range.getSize()
+                        + " values, more than the client's limit of " + MAX_VALUES);
             }
             var values = new ArrayList<Object>();
             range.createOriginalIterator().forEachRemaining(values::add);
             return values;
         }
-        throw new Refusal("the value range provider " + provider.name() + " of type " + value.getClass().getName());
+        throw new Refusal("the value range provider " + provider.name() + " returns a "
+                + value.getClass().getSimpleName(), "Return a collection, an array or a ValueRange.");
     }
 
     /**

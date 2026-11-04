@@ -78,8 +78,13 @@ public final class WireEncoder {
         var overrides = weightOverrides();
         var ids = new java.util.HashSet<String>();
         for (RecordedStreams.Node constraint : constraints) {
-            problem.addConstraints(streams.constraint(constraint, scoreClass, overrides));
-            ids.add(RecordedStreams.constraintId(constraint));
+            var id = RecordedStreams.constraintId(constraint);
+            try {
+                problem.addConstraints(streams.constraint(constraint, scoreClass, overrides));
+            } catch (Refusal refusal) {
+                throw refusal.of("Constraint \"" + id + "\"");
+            }
+            ids.add(id);
         }
         var unknown = overrides.keySet().stream().filter(id -> !ids.contains(id)).sorted().toList();
         if (!unknown.isEmpty()) {
@@ -146,7 +151,7 @@ public final class WireEncoder {
                 return field.getType();
             }
         }
-        throw new Refusal("a solution without a @PlanningScore field");
+        throw new Refusal("the planning solution " + solutionClass.getSimpleName() + " has no @PlanningScore field");
     }
 
     /**
@@ -162,7 +167,9 @@ public final class WireEncoder {
         } else if (type == HardMediumSoftScore.class || type == HardMediumSoftBigDecimalScore.class) {
             wire.setScoreType(ScoreType.HARD_MEDIUM_SOFT);
         } else {
-            throw new Refusal("the score type " + type.getSimpleName());
+            throw new Refusal("the service does not support the score type " + type.getSimpleName() + " yet",
+                    "The service supports SimpleScore, HardSoftScore and HardMediumSoftScore, and their BigDecimal"
+                    + " forms.");
         }
         return wire.setBigDecimal(type.getSimpleName().contains("BigDecimal")).build();
     }
@@ -183,7 +190,8 @@ public final class WireEncoder {
         }
         if (!tables.shadowsAsData && info.variables.size() > 1
                 && info.variables.stream().anyMatch(ProblemTables.VariableInfo::list)) {
-            throw new Refusal("the class " + info.type.getSimpleName() + " with a list variable beside other variables");
+            throw new Refusal("the service does not solve a list variable beside other planning variables of the"
+                    + " same class yet, as " + info.type.getSimpleName() + " has them");
         }
         for (ProblemTables.VariableInfo variable : info.variables) {
             if (variable.list()) {
@@ -216,8 +224,8 @@ public final class WireEncoder {
             return List.of();
         }
         if (tables.classes.stream().flatMap(c -> c.variables.stream()).anyMatch(ProblemTables.VariableInfo::list)) {
-            throw new Refusal("a pinned " + info.type.getSimpleName() + " in a model with a list variable, which"
-                    + " cannot be kept in place yet");
+            throw new Refusal("the service cannot keep a pinned " + info.type.getSimpleName() + " in place yet, in a"
+                    + " model with a list variable");
         }
         return pinned;
     }
@@ -243,7 +251,12 @@ public final class WireEncoder {
         var shadows = new HashMap<ShadowInfo, ShadowVariable>();
         for (ClassInfo info : List.copyOf(tables.classes)) {
             for (ShadowInfo shadow : info.shadows) {
-                shadows.put(shadow, shadow(info, shadow));
+                try {
+                    shadows.put(shadow, shadow(info, shadow));
+                } catch (Refusal refusal) {
+                    throw refusal.of("The shadow variable " + info.type.getSimpleName() + "."
+                            + shadow.field().getName());
+                }
             }
         }
         return shadows;
@@ -255,7 +268,8 @@ public final class WireEncoder {
      */
     private ShadowVariable shadow(ClassInfo owner, ShadowInfo shadow) {
         if (shadow.type() == null) {
-            throw new Refusal("the shadow variable " + shadow.field().getName() + ", whose type has no encoding");
+            throw new Refusal("the client cannot translate its type, " + shadow.field().getGenericType().getTypeName(),
+                    Constructs.TYPES);
         }
         var wire = ShadowVariable.newBuilder().setName(shadow.field().getName()).setValueType(valueType(shadow.type()));
         switch (shadow.kind()) {
@@ -272,7 +286,7 @@ public final class WireEncoder {
                 sources.addAll(undeclaredReads(shadow, supplier, sources));
                 wire.setKind(ShadowKind.DECLARATIVE).setSupplier(supplier.node()).addAllSources(sources);
             }
-            case CASCADING -> throw new Refusal("the cascading update shadow variable " + shadow.field().getName());
+            case CASCADING -> throw new Refusal("the service does not run cascading update shadow variables yet");
         }
         return wire.build();
     }
@@ -300,10 +314,11 @@ public final class WireEncoder {
             if (!node.op().equals("variable") && !node.op().equals("list_variable") && !node.op().equals("shadow")) {
                 continue;
             }
-            var supplierName = "the supplier " + shadow.method() + " of " + shadow.field().getName();
             if (path == null) {
-                throw new Refusal(supplierName + " reads " + pathName(List.of(step(node))) + " of an object it does"
-                        + " not reach by member reads from its own entity, which no @ShadowSources path can name");
+                throw new Refusal("its supplier " + shadow.method() + " reads " + pathName(List.of(step(node)))
+                        + " of an object that it does not reach through fields from its own entity, so no"
+                        + " @ShadowSources path can name it", "Reach the object through fields that start at the"
+                        + " supplier's own entity.");
             }
             if (sources.stream().noneMatch(source -> isPrefix(path, source.getStepsList()))
                     && further.stream().noneMatch(source -> isPrefix(path, source.getStepsList()))) {
@@ -383,8 +398,8 @@ public final class WireEncoder {
                 }
             }
         }
-        throw new Refusal("the shadow variable " + shadow.field().getName() + " follows no list variable "
-                + shadow.source() + " that holds " + owner.type.getSimpleName());
+        throw new Refusal("it names the list variable " + shadow.source() + ", but no list variable of that name"
+                + " holds " + owner.type.getSimpleName() + " objects");
     }
 
     /**
@@ -397,13 +412,14 @@ public final class WireEncoder {
                 if (m.getName().equals(method) && m.getParameterCount() == 0) {
                     var sources = m.getAnnotation(ShadowSources.class);
                     if (sources == null) {
-                        throw new Refusal("the supplier " + method + " without @ShadowSources");
+                        throw new Refusal("its supplier " + method + " has no @ShadowSources annotation");
                     }
                     return sources.value();
                 }
             }
         }
-        throw new Refusal("no supplier method " + method + " on " + owner.type.getSimpleName());
+        throw new Refusal(owner.type.getSimpleName() + " has no method " + method + "() without parameters, which"
+                + " the shadow variable names as its supplier");
     }
 
     /**
@@ -418,10 +434,13 @@ public final class WireEncoder {
         var at = owner;
         for (String name : path.split("\\.")) {
             if (at == null || name.endsWith("[]")) {
-                throw new Refusal("the source path " + path + " (only steps through single references so far)");
+                throw new Refusal("the service does not follow the source path " + path + " yet", "It follows paths"
+                        + " through single references, not through collections.");
             }
-            var field = Members.allFields(at.type).stream().filter(f -> f.getName().equals(name)).findFirst()
-                    .orElseThrow(() -> new Refusal("the source path " + path + ": no field " + name));
+            var stepClass = at.type;
+            var field = Members.allFields(stepClass).stream().filter(f -> f.getName().equals(name)).findFirst()
+                    .orElseThrow(() -> new Refusal("the source path " + path + " names " + name + ", which is no"
+                            + " field of " + stepClass.getSimpleName()));
             var type = sourceStep(wire, at, field);
             at = type != null && type.kind() == Type.Kind.REF ? type.refClass() : null;
         }
@@ -467,8 +486,9 @@ public final class WireEncoder {
                 .setAllowsUnassignedValues(variable.allowsUnassigned());
         var values = ValueRanges.of(tables, owner, variable);
         if (values.shared() == null) {
-            throw new Refusal("the list variable " + owner.type.getSimpleName() + "." + variable.field().getName()
-                    + ", whose value range provider is on the entity class");
+            throw new Refusal("the service does not solve the list variable " + owner.type.getSimpleName() + "."
+                    + variable.field().getName() + " yet, whose value range provider is on the entity class",
+                    "Move the value range provider to the planning solution.");
         }
         wire.setRange(range(owner, variable, values.shared()));
         var elementType = Type.ref(elements);
@@ -499,7 +519,7 @@ public final class WireEncoder {
                 var value = Members.read(column.field(), row);
                 if (value == null) {
                     throw new Refusal("the field " + info.type.getSimpleName() + "." + column.field().getName()
-                            + " holding null (a null " + kind + " in a column)");
+                            + " holds null, but the service has no null for " + column.type() + " values");
                 }
                 if (kind == Type.Kind.DOUBLE) {
                     wire.addDoubles(((Number) value).doubleValue());
@@ -556,14 +576,18 @@ public final class WireEncoder {
         var range = ValueRange.newBuilder();
         for (Object value : values) {
             if (value == null) {
-                throw new Refusal("a null in the value range of " + owner.type.getSimpleName() + "."
-                        + variable.field().getName());
+                throw new Refusal("the value range of " + owner.type.getSimpleName() + "."
+                        + variable.field().getName() + " holds null", "Leave null out of the range; set"
+                        + " allowsUnassigned = true on the variable to let it stay unassigned.");
             }
             try {
                 range.addValues(tables.encodeVariableValue(variable, value));
             } catch (IllegalStateException notARow) {
-                throw new Refusal("a value in the range of " + owner.type.getSimpleName() + "."
-                        + variable.field().getName() + " that no collection of the solution holds: " + value);
+                throw new Refusal("the value range of " + owner.type.getSimpleName() + "."
+                        + variable.field().getName() + " holds " + value + ", which no collection of the planning"
+                        + " solution holds", "The client sends values as objects of the problem: add them to a"
+                        + " collection of the planning solution that is annotated with"
+                        + " @ProblemFactCollectionProperty.");
             }
         }
         return range.build();
@@ -665,7 +689,8 @@ public final class WireEncoder {
      */
     private static Expression expression(Ir.Node node, int[] renumbered) {
         if (node.type().kind() == Type.Kind.NULL) {
-            throw new Refusal("a null whose kind nothing in its function tells (" + node.op() + ")");
+            throw Refusal.untranslatable("a null whose type nothing in its function tells", "Give the null a type,"
+                    + " for example through a typed local variable.");
         }
         var wire = Expression.newBuilder().setOp(node.op()).setValueType(valueType(node.type()))
                 .setClassId(node.classId());
@@ -698,7 +723,8 @@ public final class WireEncoder {
             case LOAD_BALANCE -> ValueKind.LOAD_BALANCE;
             case SEQUENCE_CHAIN -> ValueKind.SEQUENCE_CHAIN;
             case SEQUENCE -> ValueKind.SEQUENCE;
-            case ITERATOR, NULL, OBJECT, MAP -> throw new Refusal("a value of kind " + type.kind() + " on the wire");
+            case ITERATOR, NULL, OBJECT, MAP -> throw Refusal.untranslatable("a function value of type " + type,
+                    Constructs.TYPES);
         });
         if (type.refClass() != null) {
             wire.setRefClass(type.refClass().id);

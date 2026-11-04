@@ -104,7 +104,8 @@ final class Streams {
             case "sum" -> {
                 var kind = pipeline.element();
                 if (kind.kind() != Kind.INT && kind.kind() != Kind.LONG) {
-                    throw new Refusal("sum of a stream of " + kind);
+                    throw Refusal.untranslatable("sum over a stream of " + kind + " values",
+                            "sum translates for int and long values.");
                 }
                 yield fold(pipeline, kind, ir.constant(kind, 0), (slot, element) -> ir.apply("add", kind, slot, element));
             }
@@ -114,7 +115,7 @@ final class Streams {
                     (slot, element) -> ir.choose(slot, ir.asBool(apply.apply(args.get(1), List.of(element))), slot));
             case "noneMatch" -> ir.not(fold(pipeline, Type.BOOL, ir.bool(false),
                     (slot, element) -> ir.choose(slot, slot, ir.asBool(apply.apply(args.get(1), List.of(element))))));
-            default -> throw new Refusal("the stream method " + name);
+            default -> throw Refusal.untranslatable("the stream method " + name, Constructs.STREAM_METHODS);
         };
     }
 

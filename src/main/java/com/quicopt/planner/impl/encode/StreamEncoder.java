@@ -89,7 +89,7 @@ final class StreamEncoder {
             case "penalize", "penalizeBigDecimal" -> Impact.PENALIZE;
             case "reward", "rewardBigDecimal" -> Impact.REWARD;
             case "impact", "impactBigDecimal" -> Impact.MIXED;
-            default -> throw new Refusal("the constraint method " + op);
+            default -> throw new Refusal("the service does not run the constraint method " + op + " yet");
         };
     }
 
@@ -114,7 +114,7 @@ final class StreamEncoder {
             case "map", "expand" -> mapOrExpand(node);
             case "distinct" -> add(StreamNode.newBuilder().setKind(StreamKind.DISTINCT).setInput(stream(node.input())),
                     tuples.get(stream(node.input())));
-            default -> throw new Refusal("the stream operation " + node.op());
+            default -> throw new Refusal("the service does not run the stream operation " + node.op() + " yet");
         };
         streamIds.put(node, id);
         return id;
@@ -345,7 +345,9 @@ final class StreamEncoder {
         var info = classInfo(complemented);
         var type = Type.ref(info);
         if (!inputTuple.get(0).equals(type) || !tables.equalsIsRowIdentity(info)) {
-            throw new Refusal("complement over " + info.type.getSimpleName() + " with equal rows or another first element");
+            throw new Refusal("the service does not run complement over " + info.type.getSimpleName()
+                    + " where the stream's first element is of another class, or where two "
+                    + info.type.getSimpleName() + " objects are equal by equals");
         }
         int firsts = add(StreamNode.newBuilder().setKind(StreamKind.MAP).setInput(input)
                 .addFunctions(arg(type, 0).node()), List.of(type));
@@ -370,7 +372,8 @@ final class StreamEncoder {
         var inputTuple = tuples.get(input);
         var collection = lifter.lift(node.args().get(0), inputTuple.subList(inputTuple.size() - 1, inputTuple.size()));
         if (collection.type().kind() != Type.Kind.LIST) {
-            throw new Refusal("flattenLast over a " + collection.type());
+            throw new Refusal("flattenLast needs a function that returns a collection, but this one returns a "
+                    + collection.type());
         }
         var tuple = new ArrayList<>(inputTuple);
         tuple.set(tuple.size() - 1, collection.type().element());
@@ -407,8 +410,8 @@ final class StreamEncoder {
             return List.of(Joiner.newBuilder().setJoinerType(JoinerType.FILTERING).setFilter(test.node()).build());
         }
         if (!(joiner instanceof AbstractJoiner<?> keyed)) {
-            throw new Refusal("the joiner " + joiner.getClass().getSimpleName() + " (only equal and comparison joiners"
-                    + " so far)");
+            throw new Refusal("the service does not run the joiner " + joiner.getClass().getSimpleName() + " yet",
+                    "Use a joiner from the Joiners class.");
         }
         var result = new ArrayList<Joiner>();
         for (int i = 0; i < keyed.getJoinerCount(); i++) {
@@ -507,7 +510,10 @@ final class StreamEncoder {
             info = tables.superclassTable(type);
         }
         if (info == null) {
-            throw new Refusal("a stream over " + type.getSimpleName() + ", which has no table");
+            throw new Refusal("a stream starts at " + type.getSimpleName() + ", but " + type.getSimpleName()
+                    + " objects are neither planning entities nor problem facts of the solution", "Add the objects"
+                    + " to a collection of the planning solution that is annotated with"
+                    + " @ProblemFactCollectionProperty or @PlanningEntityCollectionProperty.");
         }
         return info;
     }

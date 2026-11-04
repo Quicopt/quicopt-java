@@ -129,7 +129,7 @@ final class CollectorEncoder {
                         || value.type().kind() == Type.Kind.BOOL || value.type().kind() == Type.Kind.DOUBLE) {
                     return single(CollectorKind.COLLECT_COUNT_DISTINCT, Type.LONG, value);
                 }
-                throw new Refusal("countDistinct over values of type " + value.type());
+                throw new Refusal("the service does not count distinct " + value.type() + " values yet");
             }
             case "min", "max" -> {
                 var kind = name.equals("min") ? CollectorKind.COLLECT_MIN : CollectorKind.COLLECT_MAX;
@@ -140,7 +140,8 @@ final class CollectorEncoder {
                 }
                 if (!item.type().isNumberEncoded() && item.type().kind() != Type.Kind.REF
                         && item.type().kind() != Type.Kind.BOOL) {
-                    throw new Refusal(name + " over items of type " + item.type());
+                    throw new Refusal("the service does not compute " + name + " over " + item.type()
+                            + " items yet");
                 }
                 var property = ranked(lifter.liftApplied(arguments.get(1), List.of(item)), ir);
                 return single(kind, item.type(), item, property);
@@ -148,11 +149,13 @@ final class CollectorEncoder {
             case "toConsecutiveSequences" -> {
                 var item = arguments.size() == 1 ? lifter.lift(identityOf(tuple), tuple) : lifter.lift(arguments.get(0), tuple);
                 if (!item.type().isNumberEncoded() && item.type().kind() != Type.Kind.REF) {
-                    throw new Refusal("toConsecutiveSequences over items of type " + item.type());
+                    throw new Refusal("the service does not compute toConsecutiveSequences over " + item.type()
+                            + " items yet");
                 }
                 var index = lifter.liftApplied(arguments.get(arguments.size() - 1), List.of(item));
                 if (index.type().kind() != Type.Kind.INT) {
-                    throw new Refusal("toConsecutiveSequences with an index of type " + index.type());
+                    throw new Refusal("toConsecutiveSequences needs an int index, but this index is a "
+                            + index.type());
                 }
                 return single(CollectorKind.COLLECT_CONSECUTIVE_SEQUENCES, Type.sequenceChain(item.type()), item,
                         ir.apply("unbox", Type.INT, index));
@@ -170,7 +173,9 @@ final class CollectorEncoder {
             default -> {
             }
         }
-        throw new Refusal("the collector " + signature + ", which the service does not compute yet");
+        throw new Refusal("the service does not compute the collector " + signature + " yet", "The collectors it"
+                + " computes so far are count(), countDistinct, sum, min, max, loadBalance, toConsecutiveSequences,"
+                + " compose and collectAndThen.");
     }
 
     /**
@@ -179,7 +184,8 @@ final class CollectorEncoder {
      */
     private static Object identityOf(List<Type> tuple) {
         if (tuple.size() != 1) {
-            throw new Refusal("a collector over the whole of a " + tuple.size() + "-element tuple");
+            throw new Refusal("the service does not compute a collector over all " + tuple.size()
+                    + " elements of a tuple", "Give the collector a function that picks one value from the tuple.");
         }
         return java.util.function.Function.identity();
     }
@@ -192,7 +198,8 @@ final class CollectorEncoder {
         return switch (value.type().kind()) {
             case INT -> ir.apply("unbox", Type.INT, value);
             case BOOL, LONG, ENUM, DATE, TIME, DATETIME, DURATION -> value;
-            default -> throw new Refusal("min or max over values of type " + value.type());
+            default -> throw new Refusal("the service does not compute min or max over " + value.type()
+                    + " values yet");
         };
     }
 

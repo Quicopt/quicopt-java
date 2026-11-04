@@ -139,7 +139,8 @@ public final class ProblemTables {
                 for (int row = 0; row < rows.size(); row++) {
                     var id = Members.read(idField, rows.get(row));
                     if (id != null && rowOfPlanningId.put(id, row) != null) {
-                        throw new Refusal("two " + type.getSimpleName() + " objects with the planning id " + id);
+                        throw new Refusal("two " + type.getSimpleName() + " objects have the planning id " + id,
+                                "Planning ids must be unique within a class.");
                     }
                 }
             }
@@ -484,7 +485,9 @@ public final class ProblemTables {
     ClassInfo requireClass(Class<?> type, String role) {
         var info = byType.get(type);
         if (info == null) {
-            throw new Refusal(role + " of type " + type.getName() + ", which no collection of the solution holds");
+            throw new Refusal(role + " holds " + type.getSimpleName() + " objects, but no collection of the planning"
+                    + " solution holds them", "The client sends values as objects of the problem: add them to a"
+                    + " collection of the planning solution that is annotated with @ProblemFactCollectionProperty.");
         }
         return info;
     }
@@ -651,13 +654,15 @@ public final class ProblemTables {
         }
         var type = typeOf(field.getGenericType());
         if (type == null) {
-            throw new Refusal("the field " + owner.type.getSimpleName() + "." + field.getName() + " of type "
-                    + field.getGenericType().getTypeName() + ", which has no encoding");
+            throw Refusal.untranslatable("reading the field " + owner.type.getSimpleName() + "." + field.getName()
+                    + ", of type " + field.getGenericType().getTypeName(), Constructs.TYPES + " For objects of"
+                    + " another class, add them to a collection of the planning solution that is annotated with"
+                    + " @ProblemFactCollectionProperty.");
         }
         if (type.kind() == Type.Kind.MAP) {
-            throw new Refusal("the map field " + owner.type.getSimpleName() + "." + field.getName()
-                    + " used other than through get, getOrDefault, containsKey, containsValue, size, isEmpty, keySet"
-                    + " or values");
+            throw Refusal.untranslatable("using the map field " + owner.type.getSimpleName() + "." + field.getName()
+                    + " other than through a method call", "On a Map, the client translates get, getOrDefault,"
+                    + " containsKey, size, isEmpty, keySet and values.");
         }
         var column = new ColumnInfo(owner.columns.size(), field, type, null, null);
         owner.columns.add(column);
@@ -797,7 +802,8 @@ public final class ProblemTables {
     long encode(Type type, Object value) {
         if (value == null) {
             if (type.kind() == Type.Kind.BOOL) {
-                throw new Refusal("a null Boolean (the planner wire has no null boolean)");
+                throw new Refusal("a null Boolean, but the service has no null for yes or no values",
+                        "Use boolean, or a Boolean that is never null.");
             }
             return type.kind() == Type.Kind.REF ? -1 : Type.NULL_LONG;
         }
@@ -812,7 +818,7 @@ public final class ProblemTables {
                     : datetimeNanos((LocalDateTime) value);
             case DURATION -> ((Duration) value).toNanos();
             case REF -> rowOf(type.refClass(), value);
-            default -> throw new Refusal("a value of kind " + type.kind() + " in a number column");
+            default -> throw new Refusal("the client cannot send a " + type + " value here");
         };
     }
 
@@ -846,8 +852,9 @@ public final class ProblemTables {
         if (offset == null) {
             offset = value.getOffset();
         } else if (!offset.equals(value.getOffset())) {
-            throw new Refusal("date-times with different offsets (" + offset + " and " + value.getOffset()
-                    + "); only date-times that share one offset can be compared on the wire");
+            throw new Refusal("the problem holds date-times with different offsets (" + offset + " and "
+                    + value.getOffset() + "), but the service compares date-times only when they share one offset",
+                    "Convert them to one offset first.");
         }
         return datetimeNanos(value.toLocalDateTime());
     }
@@ -880,7 +887,7 @@ public final class ProblemTables {
                     .mapToLong(row -> encodeBoxed(column.type(), field.getType(), Members.read(field, row))).toArray();
         } catch (Refusal refusal) {
             throw new Refusal("the field " + owner.type.getSimpleName() + "." + field.getName() + " holds "
-                    + refusal.getMessage());
+                    + refusal.reason());
         }
     }
 
@@ -901,7 +908,8 @@ public final class ProblemTables {
      */
     static void requireNotNullEncoding(Class<?> declared, Object value) {
         if (declared == Long.class && value instanceof Long l && l == Type.NULL_LONG) {
-            throw new Refusal("a Long equal to Long.MIN_VALUE (the planner wire reads it as null)");
+            throw new Refusal("a Long equal to Long.MIN_VALUE, which the service reads as null",
+                    "Use a primitive long, or another value.");
         }
     }
 
@@ -928,11 +936,12 @@ public final class ProblemTables {
             return (Collection<?>) value;
         }
         if (value == null) {
-            throw new Refusal("a null map");
+            throw new Refusal("null instead of a map", "Use an empty map instead.");
         }
         if (value instanceof java.util.IdentityHashMap<?, ?>
                 || value instanceof java.util.SortedMap<?, ?> sorted && sorted.comparator() != null) {
-            throw new Refusal("a map that compares its keys other than by equals: " + value.getClass().getName());
+            throw new Refusal("a " + value.getClass().getSimpleName() + ", which compares its keys other than by"
+                    + " equals", "Use a HashMap or a LinkedHashMap.");
         }
         var map = (Map<?, ?>) value;
         return column.part() == MapPart.KEYS ? map.keySet() : map.values();
@@ -953,7 +962,9 @@ public final class ProblemTables {
         }
         long cells = argClasses.stream().mapToLong(c -> c.rows.size()).reduce(1, Math::multiplyExact);
         if (cells > maxCells) {
-            throw new Refusal("tabulating " + method.getName() + " needs " + cells + " cells, more than " + maxCells);
+            throw new Refusal("computing " + method.getName() + " in advance for every combination of its"
+                    + " arguments needs " + cells + " values, more than the client's limit of " + maxCells,
+                    "Give the method arguments with fewer objects, or keep its values in a Map field.");
         }
         var values = new long[(int) cells];
         for (int cell = 0; cell < cells; cell++) {
@@ -979,7 +990,9 @@ public final class ProblemTables {
             var params = java.util.Arrays.copyOfRange(args, 1, args.length);
             return Modifier.isStatic(method.getModifiers()) ? method.invoke(null, args) : method.invoke(args[0], params);
         } catch (ReflectiveOperationException e) {
-            throw new Refusal("tabulating " + method.getName() + ": " + e.getCause());
+            throw new Refusal("computing " + method.getName() + " in advance for every combination of its"
+                    + " arguments failed: " + e.getCause(), "The client calls the method for every combination of"
+                    + " its arguments, so it must not throw for any of them.");
         }
     }
 
@@ -1104,7 +1117,8 @@ public final class ProblemTables {
      */
     private ClassInfo addClass(Class<?> type, boolean entity, List<?> rows) {
         if (byType.containsKey(type)) {
-            throw new Refusal("two collections of " + type.getName());
+            throw new Refusal("the planning solution has two collections of " + type.getSimpleName(),
+                    "Keep all " + type.getSimpleName() + " objects in one collection.");
         }
         var info = new ClassInfo(classes.size(), type, entity, rows, loose);
         classes.add(info);
@@ -1161,7 +1175,7 @@ public final class ProblemTables {
         if (value instanceof Collection<?> collection) {
             return List.copyOf(collection);
         }
-        throw new Refusal("the solution's field " + field.getName() + ", which holds no collection");
+        throw new Refusal("the planning solution's field " + field.getName() + " holds no collection");
     }
 
     /**

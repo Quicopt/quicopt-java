@@ -71,7 +71,8 @@ public final class Members {
                 && parameterized.getActualTypeArguments()[0] instanceof Class<?> element) {
             return element;
         }
-        throw new Refusal("a collection of type " + generic.getTypeName() + ", whose element class is not given");
+        throw new Refusal("the collection type " + generic.getTypeName() + " does not name its element class",
+                "Give it a type argument, such as List<Room>.");
     }
 
     /**

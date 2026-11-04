@@ -24,8 +24,10 @@ public final class LambdaRegistry {
      *
      * @param implMethod the method that holds the lambda's code
      * @param instantiatedDesc the functional interface's method descriptor at this site
+     * @param place where the lambda is created, as a stack trace prints it, such as
+     *        {@code com.example.Rules.roomConflict(Rules.java:31)}
      */
-    public record Site(Handle implMethod, String instantiatedDesc) {
+    public record Site(Handle implMethod, String instantiatedDesc, String place) {
     }
 
     private static final List<Site> SITES = Collections.synchronizedList(new ArrayList<>());

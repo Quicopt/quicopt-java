@@ -174,13 +174,15 @@ class EncoderTest {
     }
 
     /**
-     * A constraint function that calls something with no translation is refused, naming the call and the line.
+     * A constraint function that calls something with no translation is refused, naming the constraint, the call
+     * and its line.
      */
     @Test
     void untranslatableFunctionsAreRefused() {
         var refusal = assertThrows(Refusal.class, () -> encode(MeetingPlan.smallWeek(), RandomConstraints.class));
+        assertTrue(refusal.getMessage().startsWith("Constraint \"Coin flip\""), refusal.getMessage());
         assertTrue(refusal.getMessage().contains("ThreadLocalRandom.current"), refusal.getMessage());
-        assertTrue(refusal.getMessage().contains("line"), refusal.getMessage());
+        assertTrue(refusal.getMessage().contains("(EncoderTest.java:"), refusal.getMessage());
     }
 
     /**

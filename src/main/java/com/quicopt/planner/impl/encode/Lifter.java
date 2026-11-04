@@ -103,8 +103,36 @@ final class Lifter implements Opcodes {
     private final ClassLoader loader;
     private final Map<String, ClassNode> classNodes = new HashMap<>();
     private final Map<Integer, Val> loopElements = new HashMap<>();
-    private int depth;
-    private String location = "?";
+    /** The methods being executed, the innermost on top: where in the model's code a refusal happens. */
+    private final java.util.ArrayDeque<Place> places = new java.util.ArrayDeque<>();
+
+    /**
+     * A method being executed, and the source line it has reached.
+     */
+    private static final class Place {
+        final ClassNode owner;
+        final MethodNode method;
+        int line = -1;
+
+        /**
+         * @param owner the class that declares the method
+         * @param method the method
+         */
+        Place(ClassNode owner, MethodNode method) {
+            this.owner = owner;
+            this.method = method;
+        }
+
+        /**
+         * @return the place as a stack trace prints it, such as {@code com.example.Rules.lambda$rules$0(Rules.java:12)}
+         */
+        @Override
+        public String toString() {
+            var file = owner.sourceFile == null ? "Unknown Source"
+                    : line < 0 ? owner.sourceFile : owner.sourceFile + ":" + line;
+            return owner.name.replace('/', '.') + "." + method.name + "(" + file + ")";
+        }
+    }
 
     /**
      * @param tables the problem's tables; fields that translated code reads are registered as columns there
@@ -154,16 +182,16 @@ final class Lifter implements Opcodes {
      * @throws Refusal naming the source line when some construct has no translation
      */
     Val liftApplied(Object lambda, List<Val> elements) {
-        depth = 0;
-        location = "?";
-        var known = knownLambdas.translate(lambda, elements, ir);
-        if (known != null) {
-            return known;
-        }
+        places.clear();
         try {
+            var known = knownLambdas.translate(lambda, elements, ir);
+            if (known != null) {
+                return known;
+            }
             return sendable(applyFunction(lambda, elements));
         } catch (Refusal refusal) {
-            throw located(refusal);
+            var site = LambdaRegistry.siteOf(lambda);
+            throw site == null ? refusal : refusal.within(site.place());
         }
     }
 
@@ -181,8 +209,7 @@ final class Lifter implements Opcodes {
         if (function instanceof Streams.Closure closure) {
             var args = new ArrayList<>(closure.captured());
             args.addAll(elements);
-            var impl = closure.implMethod();
-            return call(impl.getOwner(), impl.getName(), impl.getDesc(), impl.getTag() == H_INVOKESTATIC, args);
+            return callHandle(closure.implMethod(), args);
         }
         var known = knownLambdas.translate(function, elements, ir);
         if (known != null) {
@@ -190,15 +217,32 @@ final class Lifter implements Opcodes {
         }
         var site = LambdaRegistry.siteOf(function);
         if (site == null) {
-            throw new Refusal("a function created outside the constraint provider: " + function);
+            throw Refusal.untranslatable("a function that was created outside the constraint provider class ("
+                    + function + ")", "Write each function as a lambda or a method reference in the constraint"
+                    + " provider class: the client can read only those.");
         }
         var args = new ArrayList<Val>();
         for (var captured : LambdaRegistry.capturedValues(function)) {
             args.add(constantOf(captured.type(), captured.value()));
         }
         args.addAll(elements);
-        var impl = site.implMethod();
-        return call(impl.getOwner(), impl.getName(), impl.getDesc(), impl.getTag() == H_INVOKESTATIC, args);
+        return callHandle(site.implMethod(), args);
+    }
+
+    /**
+     * Calls the method that holds a lambda's code, or that a method reference names.
+     *
+     * @return the call's value
+     * @throws Refusal for a constructor reference, such as {@code Pair::new}
+     */
+    private Val callHandle(Handle impl, List<Val> args) {
+        if (impl.getTag() == H_NEWINVOKESPECIAL) {
+            throw Refusal.untranslatable("creating an object (" + Constructs.simpleName(impl.getOwner()) + "::new)",
+                    Constructs.NEW_OBJECT);
+        }
+        boolean isStatic = impl.getTag() == H_INVOKESTATIC;
+        return call(impl.getOwner(), impl.getName(), impl.getDesc(), isStatic, !isStatic
+                && impl.getTag() != H_INVOKESPECIAL, args);
     }
 
     /**
@@ -212,7 +256,7 @@ final class Lifter implements Opcodes {
         var bootstrap = insn.bsm;
         if (!bootstrap.getOwner().equals("java/lang/invoke/LambdaMetafactory") || insn.bsmArgs.length < 2
                 || !(insn.bsmArgs[1] instanceof Handle impl)) {
-            throw new Refusal("the dynamic call " + insn.name + " (only lambdas inside a function translate)");
+            throw Constructs.dynamicCall(insn);
         }
         int count = org.objectweb.asm.Type.getArgumentTypes(insn.desc).length;
         var captured = new ArrayList<Val>();
@@ -247,8 +291,9 @@ final class Lifter implements Opcodes {
      */
     private Val sendable(Val value) {
         if (value.known() != null) {
-            throw new Refusal("a function whose value is the object " + value.type()
-                    + ", which is neither a planning object nor a value");
+            throw Refusal.untranslatable("a function that returns an object of class " + value.type()
+                    + ", which is neither a planning entity nor a problem fact",
+                    "A function must return a value. " + Constructs.TYPES);
         }
         requireSignsComparedWithZero(value);
         return value;
@@ -272,13 +317,12 @@ final class Lifter implements Opcodes {
                     || node.op().equals("ifelse") && (signs.get(node.args().get(1)) || signs.get(node.args().get(2))));
             for (int i = 0; i < node.args().size(); i++) {
                 if (signs.get(node.args().get(i)) && !takesSign(node, i)) {
-                    throw new Refusal("a compareTo result used as a number in " + node.op()
-                            + " (it may only be compared with 0, as in a.compareTo(b) < 0)");
+                    throw Refusal.untranslatable("a compareTo result used as a number", Constructs.SIGN_ONLY);
                 }
             }
         }
         if (signs.get(value.node())) {
-            throw new Refusal("a function whose value is a compareTo result (it may only be compared with 0)");
+            throw Refusal.untranslatable("a function that returns a compareTo result", Constructs.SIGN_ONLY);
         }
     }
 
@@ -298,13 +342,6 @@ final class Lifter implements Opcodes {
     }
 
     /**
-     * @return the refusal with the source location prepended, when the bytecode named one
-     */
-    private Refusal located(Refusal refusal) {
-        return location.equals("?") ? refusal : new Refusal(location + ": " + refusal.getMessage());
-    }
-
-    /**
      * Translates a method of an entity class without parameters, such as a shadow variable's supplier, applied to
      * one entity.
      *
@@ -312,19 +349,15 @@ final class Lifter implements Opcodes {
      * @throws Refusal naming the source line when some construct has no translation
      */
     Val liftMethod(ClassInfo owner, String name) {
-        depth = 0;
-        location = "?";
+        places.clear();
         var method = findMethod(owner.type, name, null);
         if (method == null) {
-            throw new Refusal("no method " + name + " on " + owner.type.getSimpleName());
+            throw new Refusal(owner.type.getSimpleName() + " has no method " + name + "() without parameters");
         }
         var self = ir.add("arg", List.of(), Type.ref(owner), owner.id, 0, 0);
         var desc = org.objectweb.asm.Type.getMethodDescriptor(method);
-        try {
-            return sendable(call(org.objectweb.asm.Type.getInternalName(owner.type), name, desc, false, List.of(self)));
-        } catch (Refusal refusal) {
-            throw located(refusal);
-        }
+        return sendable(call(org.objectweb.asm.Type.getInternalName(owner.type), name, desc, false, true,
+                List.of(self)));
     }
 
     /**
@@ -356,25 +389,32 @@ final class Lifter implements Opcodes {
             }
         }
         if (method == null) {
-            throw new Refusal("a comparison of " + type.getSimpleName() + " objects, which have no compareTo");
+            throw Refusal.untranslatable("comparing " + type.getSimpleName() + " objects in a joiner, since "
+                    + type.getSimpleName() + " has no compareTo method", "Compare one of their fields instead, such"
+                    + " as a number or a date.");
         }
-        depth = 0;
-        location = "?";
-        try {
-            return call(org.objectweb.asm.Type.getInternalName(method.getDeclaringClass()), "compareTo",
-                    org.objectweb.asm.Type.getMethodDescriptor(method), false, List.of(a, b));
-        } catch (Refusal refusal) {
-            throw located(refusal);
-        }
+        places.clear();
+        return call(org.objectweb.asm.Type.getInternalName(method.getDeclaringClass()), "compareTo",
+                org.objectweb.asm.Type.getMethodDescriptor(method), false, false, List.of(a, b));
     }
 
     /**
      * Executes a call symbolically.
      *
+     * @param owner the class the call names
+     * @param isVirtual whether the receiver's class picks the code, as for {@code invokevirtual}; a static call
+     *        and an {@code invokespecial} ({@code super.m()}, a private method) run the named class's code
      * @param args the receiver first for an instance method, then the arguments
      * @return the call's value
      */
-    private Val call(String owner, String name, String desc, boolean isStatic, List<Val> args) {
+    private Val call(String owner, String name, String desc, boolean isStatic, boolean isVirtual, List<Val> args) {
+        owner = declaringClass(owner, name, desc, isVirtual ? args.get(0) : null);
+        if (!isStatic && (args.get(0).known() instanceof java.util.Collection<?>
+                || args.get(0).known() instanceof Map<?, ?>)) {
+            throw Refusal.untranslatable("a call to " + Constructs.simpleName(owner) + "." + name + " on a"
+                    + " collection that no planning entity or problem fact holds in a field",
+                    Constructs.HELD_COLLECTION);
+        }
         var intrinsic = intrinsics.apply(owner, name, desc, args);
         if (intrinsic != null) {
             return intrinsic;
@@ -384,33 +424,30 @@ final class Lifter implements Opcodes {
             if (table != null) {
                 return table;
             }
-            throw new Refusal("a call to " + owner.replace('/', '.') + "." + name + whyNotTabulated(args));
+            throw Constructs.call(owner, name).because(whyNotTabulated(name, args));
         }
-        var callerLocation = location;
         try {
             return inline(owner, name, desc, isStatic, args);
         } catch (Refusal refusal) {
             var table = tabulate(owner, name, desc, isStatic, args);
             if (table == null) {
-                var why = whyNotTabulated(args); // keeps the callee's location, where the refusal happened
-                throw why.isEmpty() ? refusal : new Refusal(refusal.getMessage() + why);
+                throw refusal.because(whyNotTabulated(name, args));
             }
-            location = callerLocation;
             return table;
         }
     }
 
     /**
      * @return why a call on fact rows was not tabulated, when a row can reach an entity whose changes the table
-     *         would miss; empty otherwise
+     *         would miss, as a clause that continues a refusal's reason; empty otherwise
      */
-    private String whyNotTabulated(List<Val> args) {
+    private String whyNotTabulated(String name, List<Val> args) {
         for (Val arg : args) {
             if (arg.type().kind() == Kind.REF && !arg.type().refClass().entity) {
                 var entity = tables.entityReachedFrom(arg.type().refClass().type);
                 if (entity != null) {
-                    return "; it cannot be computed in advance either, since " + arg.type() + " objects can reach "
-                            + entity.getSimpleName() + " entities through their fields";
+                    return ", and it cannot compute " + name + " in advance either, since " + arg.type()
+                            + " objects reach " + entity.getSimpleName() + " entities through their fields";
                 }
             }
         }
@@ -419,21 +456,40 @@ final class Lifter implements Opcodes {
 
     /**
      * @return the value of the callee's own bytecode, executed on the symbolic arguments
+     * @param owner the class that declares the callee's code
      */
     private Val inline(String owner, String name, String desc, boolean isStatic, List<Val> args) {
-        var implOwner = isStatic ? owner : declaringClass(owner, name, desc, args.get(0));
-        var method = methodNode(implOwner, name, desc);
-        if (depth >= MAX_CALL_DEPTH) {
-            throw new Refusal("calls nested deeper than " + MAX_CALL_DEPTH);
+        var method = methodNode(owner, name, desc);
+        if (places.size() >= MAX_CALL_DEPTH) {
+            throw Refusal.untranslatable("calls nested deeper than " + MAX_CALL_DEPTH + " methods",
+                    "This is usually a recursive method, which has no translation: write it as a for-each loop over"
+                            + " a list instead.");
         }
-        var callerLocation = location;
-        depth++;
+        places.push(new Place(classNode(owner), method));
         try {
-            var result = run(method, new Frame(initialLocals(method, isStatic, args)));
-            location = callerLocation;
-            return result;
+            requireNoCatch(method);
+            return run(method, new Frame(initialLocals(method, isStatic, args)));
+        } catch (Refusal refusal) {
+            throw refusal.at(places.stream().map(Place::toString).toList());
         } finally {
-            depth--;
+            places.pop();
+        }
+    }
+
+    /**
+     * The lifter follows the paths of a method that return or throw, never those into a {@code catch}: where a
+     * translated function fails, the original might have caught the exception and gone on.
+     *
+     * @throws Refusal for a method with a {@code catch} clause, at the line of the clause
+     */
+    private void requireNoCatch(MethodNode method) {
+        for (var block : method.tryCatchBlocks) {
+            if (block.type == null) {
+                continue; // a finally block, which the code also runs on the paths that do not throw
+            }
+            places.peek().line = lineAfter(block.handler, places.peek().line);
+            throw Refusal.untranslatable("a try/catch block", "The client does not follow exceptions that are"
+                    + " caught. Test for the condition before it would throw instead, such as x != null.");
         }
     }
 
@@ -469,7 +525,7 @@ final class Lifter implements Opcodes {
         var sweep = new Sweep(method, new Paths(ir), frame, null);
         execute(sweep, method.instructions.getFirst());
         if (sweep.current != null || !sweep.waiting.isEmpty()) {
-            throw new Refusal("control flow fell off the end of " + method.name);
+            throw Refusal.untranslatable("the method " + method.name + ", whose code ends without a return", null);
         }
         var value = sweep.paths.value();
         var type = returnType(method);
@@ -502,7 +558,7 @@ final class Lifter implements Opcodes {
         if (insn instanceof LabelNode label) {
             sweep.current = arrive(sweep, label);
         } else if (insn instanceof LineNumberNode line) {
-            location = sweep.method.name + " (line " + line.line + ")";
+            places.peek().line = line.line;
         } else if (sweep.current == null || op < 0) {
             return insn.getNext(); // code no path reaches, or a stack map frame
         } else if (isLoopHead(insn, sweep.current.frame())) {
@@ -554,7 +610,7 @@ final class Lifter implements Opcodes {
      *
      * @throws Refusal for a jump backwards, which is a loop of another shape, or out of a loop body (a break)
      */
-    private static void wait(Sweep sweep, JumpInsnNode jump, Paths.Arrival path) {
+    private void wait(Sweep sweep, JumpInsnNode jump, Paths.Arrival path) {
         var target = jump.label;
         if (sweep.loop != null && target == sweep.loop.head()) {
             sweep.atBackEdge.add(path);
@@ -562,10 +618,12 @@ final class Lifter implements Opcodes {
         }
         var instructions = sweep.method.instructions;
         if (instructions.indexOf(target) < instructions.indexOf(jump)) {
-            throw new Refusal("a loop that is not a for-each over a list");
+            places.peek().line = lineAfter(target, places.peek().line); // the loop's head
+            throw Refusal.untranslatable("a while loop, a do-while loop or a counting for loop", Constructs.LOOPS);
         }
         if (sweep.loop != null && instructions.indexOf(target) > instructions.indexOf(sweep.loop.backEdge())) {
-            throw new Refusal("a break out of a loop");
+            throw Refusal.untranslatable("a break out of a loop", "A loop always runs to its end here: set a flag"
+                    + " in a local variable instead of breaking, or use a stream's anyMatch.");
         }
         sweep.waiting.computeIfAbsent(target, label -> new ArrayList<>()).add(path);
     }
@@ -577,7 +635,8 @@ final class Lifter implements Opcodes {
      */
     private void end(Sweep sweep, int op) {
         if (sweep.loop != null) {
-            throw new Refusal("a return or throw inside a loop");
+            throw Refusal.untranslatable("a return or a throw inside a loop", "Keep the result in a local variable"
+                    + " and return it after the loop, or use a stream's anyMatch, allMatch or noneMatch.");
         }
         var value = op >= IRETURN && op <= ARETURN ? returnValue(sweep.method, sweep.current.frame().pop())
                 : ir.add("fail", List.of(), Type.NULL, 0, 0, 0);
@@ -634,7 +693,7 @@ final class Lifter implements Opcodes {
     private AbstractInsnNode foldLoop(MethodNode method, MethodInsnNode hasNext, Frame frame) {
         var iterator = frame.pop();
         if (!(nextReal(hasNext) instanceof JumpInsnNode exit) || exit.getOpcode() != IFEQ) {
-            throw new Refusal("an iterator loop of an unfamiliar shape");
+            throw Refusal.untranslatable("a loop over an iterator that is not a for-each loop", Constructs.LOOPS);
         }
         var backEdge = backEdge(method, hasNext, exit);
         var slots = carriedSlots(method, exit, backEdge, frame);
@@ -670,7 +729,7 @@ final class Lifter implements Opcodes {
         var sweep = new Sweep(method, new Paths(ir), frame, loop);
         execute(sweep, first);
         if (sweep.atBackEdge.isEmpty()) {
-            throw new Refusal("a loop body that never reaches its end");
+            throw Refusal.untranslatable("a loop whose body never reaches its end", Constructs.LOOPS);
         }
         return sweep.paths.join(sweep.atBackEdge).frame();
     }
@@ -689,7 +748,7 @@ final class Lifter implements Opcodes {
             }
         }
         if (last == null) {
-            throw new Refusal("a loop without a back edge");
+            throw Refusal.untranslatable("a loop of a shape it does not know", Constructs.LOOPS);
         }
         return last;
     }
@@ -753,7 +812,7 @@ final class Lifter implements Opcodes {
             }
             return ir.apply(op == IFNULL ? "eq" : "ne", Type.BOOL, v, ir.nullOf(v.type()));
         }
-        throw new Refusal("the jump instruction " + op);
+        throw Refusal.untranslatable("a jump of a kind it does not know (bytecode instruction " + op + ")", null);
     }
 
     /**
@@ -770,7 +829,14 @@ final class Lifter implements Opcodes {
         if (other.type().kind() == Kind.NULL || v.type().kind() == Kind.REF || v.type().kind() == Kind.ENUM) {
             return v;
         }
-        throw new Refusal("== on " + v.type() + " values (use equals)");
+        var name = switch (v.type().kind()) {
+            case INT -> "Integer";
+            case LONG -> "Long";
+            case BOOL -> "Boolean";
+            default -> v.type().toString();
+        };
+        throw Refusal.untranslatable("== on two " + name + " values", "== compares objects, and two equal " + name
+                + " values may be different objects: compare them with equals.");
     }
 
     /**
@@ -788,7 +854,8 @@ final class Lifter implements Opcodes {
         if (op >= ILOAD && op <= ALOAD) {
             var value = frame.locals[((VarInsnNode) insn).var];
             if (value == null) {
-                throw new Refusal("a local variable that holds values of different types on different paths");
+                throw Refusal.untranslatable("a local variable that holds values of different types, depending on"
+                        + " a branch", "Give each type of value its own variable.");
             }
             frame.push(value);
         } else if (op >= ISTORE && op <= ASTORE) {
@@ -815,15 +882,15 @@ final class Lifter implements Opcodes {
         } else if (op == INVOKEDYNAMIC) {
             frame.push(closure((InvokeDynamicInsnNode) insn, frame));
         } else {
-            stepArithmetic(op, frame);
+            stepArithmetic(insn, frame);
         }
     }
 
     /**
      * Executes an arithmetic, conversion or stack instruction.
      */
-    private void stepArithmetic(int op, Frame frame) {
-        switch (op) {
+    private void stepArithmetic(AbstractInsnNode insn, Frame frame) {
+        switch (insn.getOpcode()) {
             case IADD, LADD -> binary("add", frame);
             case ISUB, LSUB -> binary("sub", frame);
             case IMUL, LMUL -> binary("mul", frame);
@@ -840,7 +907,7 @@ final class Lifter implements Opcodes {
             case POP -> frame.pop();
             case CHECKCAST -> {
             }
-            default -> throw new Refusal("the bytecode instruction " + op);
+            default -> throw Constructs.instruction(insn);
         }
     }
 
@@ -883,8 +950,16 @@ final class Lifter implements Opcodes {
             frame.push(loopElement(args.get(0)));
             return;
         }
+        if (feedsSwitch(insn) && insn.name.equals("ordinal") && insn.desc.equals("()I")) {
+            throw Refusal.untranslatable("a switch on an enum", Constructs.ENUM_SWITCH);
+        }
+        if (feedsSwitch(insn) && insn.name.equals("hashCode") && insn.owner.equals("java/lang/String")) {
+            throw Refusal.untranslatable("a switch on a string", Constructs.STRING_SWITCH);
+        }
         if (org.objectweb.asm.Type.getReturnType(insn.desc) == org.objectweb.asm.Type.VOID_TYPE) {
-            throw new Refusal("a call to the void method " + insn.name);
+            throw Refusal.untranslatable("a call to " + Constructs.simpleName(insn.owner) + "." + insn.name
+                    + ", which returns nothing", "A constraint function only computes a value, so a call that"
+                    + " prints or changes something has no place in it: remove the call.");
         }
         if (!isStatic) {
             if (args.get(0).known() instanceof Streams.Closure closure && !FUNCTION_DEFAULTS.contains(insn.name)) {
@@ -897,7 +972,17 @@ final class Lifter implements Opcodes {
                 return;
             }
         }
-        frame.push(call(insn.owner, insn.name, insn.desc, isStatic, args));
+        frame.push(call(insn.owner, insn.name, insn.desc, isStatic, !isStatic && insn.getOpcode() != INVOKESPECIAL,
+                args));
+    }
+
+    /**
+     * @return whether a switch uses the value of a call right away, as it uses {@code ordinal()} in a switch on an
+     *         enum and {@code hashCode()} in a switch on a string
+     */
+    private static boolean feedsSwitch(MethodInsnNode insn) {
+        var next = nextReal(insn);
+        return next != null && (next.getOpcode() == TABLESWITCH || next.getOpcode() == LOOKUPSWITCH);
     }
 
     /**
@@ -906,7 +991,7 @@ final class Lifter implements Opcodes {
     private Val loopElement(Val iterator) {
         var element = loopElements.get(iterator.node());
         if (element == null) {
-            throw new Refusal("an iterator used outside a for-each loop");
+            throw Refusal.untranslatable("an iterator used outside a for-each loop", Constructs.LOOPS);
         }
         return element;
     }
@@ -925,7 +1010,8 @@ final class Lifter implements Opcodes {
         }
         var owner = object.type().kind() == Kind.REF ? object.type().refClass() : null;
         if (owner == null) {
-            throw new Refusal("reads field " + insn.name + " of a " + object.type() + ", not of a planning object");
+            throw Refusal.untranslatable("reading the field " + insn.name + " of a " + object.type()
+                    + ", which is neither a planning entity nor a problem fact", Constructs.FACT_CLASSES);
         }
         var field = findField(owner.type, insn.name);
         var variable = tables.variable(owner, field);
@@ -936,13 +1022,16 @@ final class Lifter implements Opcodes {
                     : ir.add("variable", List.of(object.node()), value, owner.id, variable.index(), 0);
         }
         if (tables.isInverseCollection(field)) {
-            throw new Refusal("reads " + owner.type.getSimpleName() + "." + field.getName() + ", the inverse relation"
-                    + " collection of a basic variable, which the service does not keep yet");
+            throw Refusal.untranslatable("reading " + owner.type.getSimpleName() + "." + field.getName()
+                    + ", the inverse relation collection of a planning variable", "The service does not keep these"
+                    + " collections yet. Join the entities that point to the object instead, with join and"
+                    + " Joiners.equal.");
         }
         var shadow = tables.shadow(owner, field);
         if (shadow != null) {
             if (shadow.type() == null) {
-                throw new Refusal("the shadow variable " + field.getName() + ", whose type has no encoding");
+                throw Refusal.untranslatable("reading the shadow variable " + owner.type.getSimpleName() + "."
+                        + field.getName() + ", of type " + field.getGenericType().getTypeName(), Constructs.TYPES);
             }
             return ir.add("shadow", List.of(object.node()), shadow.type(), owner.id, shadow.index(), 0);
         }
@@ -973,8 +1062,8 @@ final class Lifter implements Opcodes {
         var field = findField(enumClass, name);
         var type = tables.typeOf(field.getGenericType());
         if (type == null) {
-            throw new Refusal("the field " + enumClass.getSimpleName() + "." + name + " of type "
-                    + field.getGenericType().getTypeName() + ", which has no encoding");
+            throw Refusal.untranslatable("reading the field " + enumClass.getSimpleName() + "." + name + ", of type "
+                    + field.getGenericType().getTypeName(), Constructs.TYPES);
         }
         var constants = enumClass.getEnumConstants();
         var value = ir.add("fail", List.of(), type, 0, 0, 0);
@@ -989,12 +1078,16 @@ final class Lifter implements Opcodes {
      * @return a static field read: enum constants and static final constants become constants
      */
     private Val getStatic(FieldInsnNode insn) {
+        if (insn.name.startsWith("$SwitchMap$")) { // the table javac makes for a switch on another class's enum
+            throw Refusal.untranslatable("a switch on an enum", Constructs.ENUM_SWITCH);
+        }
         try {
             var field = javaClass(insn.owner).getDeclaredField(insn.name);
             field.setAccessible(true);
             return constantOf(field.getType(), field.get(null));
         } catch (ReflectiveOperationException e) {
-            throw new Refusal("the static field " + insn.owner + "." + insn.name);
+            throw Refusal.untranslatable("reading the static field " + Constructs.simpleName(insn.owner) + "."
+                    + insn.name + ", which it cannot access", null);
         }
     }
 
@@ -1014,6 +1107,9 @@ final class Lifter implements Opcodes {
     private Val constantOf(Object value) {
         if (value == null) {
             return ir.constant(Type.NULL, 0);
+        }
+        if (value instanceof Double || value instanceof Float) {
+            throw Refusal.untranslatable("a floating-point number (double or float)", Constructs.WHOLE_NUMBERS);
         }
         if (value instanceof Integer || value instanceof Short || value instanceof Byte) {
             return ir.constant(Type.INT, ((Number) value).longValue());
@@ -1082,6 +1178,18 @@ final class Lifter implements Opcodes {
     }
 
     /**
+     * @return the source line that starts at a label, or {@code otherwise} when none does
+     */
+    private static int lineAfter(LabelNode label, int otherwise) {
+        for (AbstractInsnNode insn = label; insn != null && insn.getOpcode() < 0; insn = insn.getNext()) {
+            if (insn instanceof LineNumberNode line) {
+                return line.line;
+            }
+        }
+        return otherwise;
+    }
+
+    /**
      * @return the next instruction that is not a label, line number or frame
      */
     private static AbstractInsnNode nextReal(AbstractInsnNode insn) {
@@ -1100,20 +1208,83 @@ final class Lifter implements Opcodes {
     }
 
     /**
-     * @return the class that declares the implementation a virtual call reaches for this receiver
+     * The class whose code a call to a method of the model's classes runs: the first class that declares the
+     * method, from the receiver's class up for a virtual call and from the named class up otherwise. A method that
+     * a model's class inherits from the JDK, such as an enum's {@code ordinal()} from {@code Enum}, resolves to
+     * the JDK class, where the translations of JDK methods apply. An interface's default method comes last, as in
+     * the JVM.
+     *
+     * @param owner the class the call names
+     * @param receiver the receiver of a virtual call, or {@code null} for a call that runs the named class's code
+     * @return the declaring class; {@code owner} itself for a call to the JDK, or when no class declares the method
      */
     private String declaringClass(String owner, String name, String desc, Val receiver) {
-        if (receiver.type().kind() != Kind.REF && receiver.known() == null) {
+        if (isJdkOrApi(owner)) {
             return owner;
         }
-        var start = receiver.known() != null ? receiver.known().getClass() : receiver.type().refClass().type;
-        for (Class<?> c = start; c != null && c != Object.class; c = c.getSuperclass()) {
-            var internalName = org.objectweb.asm.Type.getInternalName(c);
-            if (classNode(internalName).methods.stream().anyMatch(m -> m.name.equals(name) && m.desc.equals(desc))) {
-                return internalName;
+        Class<?> receiverClass = receiver == null ? null
+                : receiver.known() != null ? receiver.known().getClass()
+                : receiver.type().kind() == Kind.REF ? receiver.type().refClass().type
+                : null;
+        var start = receiverClass == null ? owner : org.objectweb.asm.Type.getInternalName(receiverClass);
+        var c = start;
+        while (!isJdkOrApi(c)) {
+            var node = classNode(c);
+            if (node.methods.stream().anyMatch(m -> m.name.equals(name) && m.desc.equals(desc))) {
+                return c;
+            }
+            c = node.superName;
+        }
+        for (Class<?> jdk = javaClass(c); jdk != null; jdk = jdk.getSuperclass()) {
+            if (declares(jdk, name, desc)) {
+                return org.objectweb.asm.Type.getInternalName(jdk);
             }
         }
-        return owner;
+        var byDefault = defaultMethodOwner(start, name, desc);
+        return byDefault != null ? byDefault : owner;
+    }
+
+    /**
+     * @return the interface whose default method a class inherits, searching the interfaces of the class and its
+     *         superclasses breadth first; {@code null} when none has one
+     */
+    private String defaultMethodOwner(String start, String name, String desc) {
+        var pending = new java.util.ArrayDeque<String>();
+        for (String c = start; c != null && !isJdkOrApi(c); c = classNode(c).superName) {
+            pending.addAll(classNode(c).interfaces);
+        }
+        var seen = new java.util.HashSet<String>();
+        while (!pending.isEmpty()) {
+            var face = pending.poll();
+            if (!seen.add(face)) {
+                continue;
+            }
+            if (isJdkOrApi(face)) {
+                var type = javaClass(face);
+                if (declares(type, name, desc)) {
+                    return face;
+                }
+                java.util.Arrays.stream(type.getInterfaces()).map(org.objectweb.asm.Type::getInternalName)
+                        .forEach(pending::add);
+                continue;
+            }
+            var node = classNode(face);
+            if (node.methods.stream().anyMatch(m -> m.name.equals(name) && m.desc.equals(desc)
+                    && (m.access & ACC_ABSTRACT) == 0)) {
+                return face;
+            }
+            pending.addAll(node.interfaces);
+        }
+        return null;
+    }
+
+    /**
+     * @return whether a class declares a method with code of this name and descriptor
+     */
+    private static boolean declares(Class<?> type, String name, String desc) {
+        return java.util.Arrays.stream(type.getDeclaredMethods()).anyMatch(m -> m.getName().equals(name)
+                && !java.lang.reflect.Modifier.isAbstract(m.getModifiers())
+                && org.objectweb.asm.Type.getMethodDescriptor(m).equals(desc));
     }
 
     /**
@@ -1137,10 +1308,19 @@ final class Lifter implements Opcodes {
      * @return the bytecode of a method
      */
     private MethodNode methodNode(String owner, String name, String desc) {
-        return classNode(owner).methods.stream()
-                .filter(m -> m.name.equals(name) && m.desc.equals(desc) && m.instructions.size() > 0)
+        var called = Constructs.simpleName(owner) + "." + name;
+        var method = classNode(owner).methods.stream().filter(m -> m.name.equals(name) && m.desc.equals(desc))
                 .findFirst()
-                .orElseThrow(() -> new Refusal("no bytecode for " + owner + "." + name));
+                .orElseThrow(() -> Refusal.untranslatable("a call to " + called + ", whose code it cannot find", null));
+        if ((method.access & ACC_ABSTRACT) != 0) {
+            throw Refusal.untranslatable("a call to the abstract method " + called + ", whose code depends on the"
+                    + " object's class", "Keep the value in a field that each subclass sets, and read the field"
+                    + " instead.");
+        }
+        if (method.instructions.size() == 0) {
+            throw Refusal.untranslatable("a call to " + called + ", which has no Java code", null);
+        }
+        return method;
     }
 
     /**
@@ -1161,7 +1341,8 @@ final class Lifter implements Opcodes {
         try {
             return Class.forName(internalName.replace('/', '.'), false, loader);
         } catch (ClassNotFoundException e) {
-            throw new Refusal("the class " + internalName);
+            throw new Refusal("the client cannot load the class " + internalName.replace('/', '.')
+                    + ", which the model's code uses");
         }
     }
 
@@ -1176,7 +1357,7 @@ final class Lifter implements Opcodes {
                 // keep looking in the superclass
             }
         }
-        throw new Refusal("no field " + name + " in " + type.getName());
+        throw new Refusal("the client cannot find the field " + name + " in " + type.getName());
     }
 
     /**
