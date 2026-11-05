@@ -41,16 +41,19 @@ final class Variables {
             if (field.getAnnotation(PlanningVariable.class) instanceof PlanningVariable basic) {
                 var scalar = ProblemTables.scalarType(field.getType());
                 if (scalar != null && !scalar.isNumberEncoded()) {
-                    throw new Refusal("the planning variable " + field.getName() + " of type "
-                            + field.getType().getSimpleName() + ", whose values the service cannot take");
+                    throw new Refusal("the service cannot assign " + field.getType().getSimpleName() + " values to the"
+                            + " planning variable " + info.type.getSimpleName() + "." + field.getName(), "A planning"
+                            + " variable can hold int, long, String, enum, LocalDate, LocalTime, LocalDateTime or"
+                            + " Duration values, or planning entities and problem facts.");
                 }
                 var values = scalar != null ? null
-                        : tables.requireClass(field.getType(), "the planning variable " + field.getName());
+                        : tables.requireClass(field.getType(), "the planning variable " + info.type.getSimpleName()
+                                + "." + field.getName());
                 info.variables.add(new ProblemTables.VariableInfo(info.variables.size(), field,
                         scalar != null ? scalar : Type.ref(values), values, false, basic.allowsUnassigned()));
             } else if (field.getAnnotation(PlanningListVariable.class) instanceof PlanningListVariable list) {
                 var values = tables.requireClass(Members.elementClass(field.getGenericType()),
-                        "the elements of the list variable " + field.getName());
+                        "the list variable " + info.type.getSimpleName() + "." + field.getName());
                 info.variables.add(new ProblemTables.VariableInfo(info.variables.size(), field, Type.ref(values),
                         values, true, list.allowsUnassignedValues()));
             }
@@ -104,16 +107,17 @@ final class Variables {
         String where = name + " of " + info.type.getSimpleName();
         if (member.isAnnotationPresent(PlanningPin.class)) {
             if (type != boolean.class && type != Boolean.class) {
-                throw new Refusal("the @PlanningPin member " + where + ", which is not a boolean");
+                throw new Refusal("the @PlanningPin member " + where + " is not a boolean");
             }
             info.pins.add(new ProblemTables.Pin(name, false, read));
         }
         if (member.isAnnotationPresent(PlanningPinToIndex.class)) {
             if (type != int.class) {
-                throw new Refusal("the @PlanningPinToIndex member " + where + ", which is not an int");
+                throw new Refusal("the @PlanningPinToIndex member " + where + " is not an int");
             }
             if (info.variables.stream().noneMatch(ProblemTables.VariableInfo::list)) {
-                throw new Refusal("the @PlanningPinToIndex member " + where + ", a class without a list variable");
+                throw new Refusal("the @PlanningPinToIndex member " + where + " is in a class without a list"
+                        + " variable");
             }
             info.pins.add(new ProblemTables.Pin(name, true, read));
         }

@@ -250,8 +250,8 @@ public final class RecordedStreams {
             return recordingProxy(ConstraintFactory.class, null);
         }
         if (!method.getReturnType().isInterface()) {
-            throw new Refusal("the stream method " + method.getName() + ", which returns a "
-                    + method.getReturnType().getSimpleName());
+            throw new Refusal("the client does not support the constraint stream method " + method.getName()
+                    + " yet, which returns a " + method.getReturnType().getSimpleName());
         }
         var next = SCORE_NEUTRAL.contains(method.getName()) ? node : new Node(method.getName(), node, spread(args));
         return recordingProxy(method.getReturnType(), next);

@@ -13,6 +13,10 @@ import java.util.Map;
  */
 final class Ir {
 
+    /** What a function can do with an object that is no value, such as a helper the provider holds. */
+    private static final String OBJECTS = "Of such an object, a constraint function can only call methods and read"
+            + " fields. " + Constructs.TYPES;
+
     /**
      * One expression node, as on the wire.
      *
@@ -74,7 +78,7 @@ final class Ir {
      */
     Node node(Val v) {
         if (v.known() != null) {
-            throw new Refusal("the object " + v.type() + " used as a value (only its methods and fields can be used)");
+            throw Refusal.untranslatable("using an object of class " + v.type() + " as a value", OBJECTS);
         }
         return nodes.get(v.node());
     }
@@ -115,7 +119,8 @@ final class Ir {
      */
     Val add(String op, List<Integer> args, Type type, int classId, int index, long value) {
         if (args.contains(-1)) {
-            throw new Refusal("an object used as a value in " + op + " (only its methods and fields can be used)");
+            throw Refusal.untranslatable("using an object that is neither a value nor a planning entity or a"
+                    + " problem fact as a value", OBJECTS);
         }
         var node = new Node(op, List.copyOf(args), type, classId, index, value);
         int id = ids.computeIfAbsent(node, n -> {
@@ -156,7 +161,8 @@ final class Ir {
      */
     Val nullOf(Type type) {
         if (type.kind() == Type.Kind.BOOL) {
-            throw new Refusal("a null Boolean (the planner wire has no null boolean)");
+            throw Refusal.untranslatable("a Boolean that may be null", "The service has no null for yes or no"
+                    + " values: use boolean, or a Boolean that is never null.");
         }
         return constant(type, type.kind() == Type.Kind.REF ? -1 : Type.NULL_LONG);
     }

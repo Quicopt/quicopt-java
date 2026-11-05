@@ -390,9 +390,14 @@ final class Intrinsics {
         if (a.type().kind() == Kind.REF && b.type().kind() == Kind.REF && a.type().refClass() != b.type().refClass()) {
             return ir.bool(false); // rows of different classes are never equal
         }
-        if (a.type().kind() != b.type().kind() || !equalsIsIdEquality(a)) {
-            throw new Refusal("equals between " + a.type() + " and " + b.type()
-                    + " (two rows of the class are equal by its own equals)");
+        if (a.type().kind() != b.type().kind()) {
+            throw Refusal.untranslatable("equals between a " + a.type() + " and a " + b.type(),
+                    "Compare values of the same type.");
+        }
+        if (!equalsIsIdEquality(a)) {
+            throw Refusal.untranslatable("equals on " + a.type() + " objects, since two different " + a.type()
+                    + " objects of the problem are equal by the equals method of " + a.type(), "The client tells"
+                    + " objects apart by identity. Compare them with ==, or compare the fields that make them equal.");
         }
         return ir.apply("eq", Type.BOOL, a, b);
     }
@@ -403,7 +408,8 @@ final class Intrinsics {
     private Val between(Val from, Val to) {
         var kind = from.type().kind();
         if (kind != to.type().kind() || (kind != Kind.TIME && kind != Kind.DATETIME)) {
-            throw new Refusal("Duration.between on " + from.type() + " and " + to.type());
+            throw Refusal.untranslatable("Duration.between on a " + from.type() + " and a " + to.type(),
+                    "It translates for two LocalTime or two LocalDateTime values.");
         }
         return ir.apply("sub", Type.DURATION, to, from);
     }
@@ -473,7 +479,8 @@ final class Intrinsics {
      */
     private long unitNanos(Val unit) {
         if (unit.type().kind() != Kind.ENUM || unit.type().javaType() != ChronoUnit.class || !ir.isConstant(unit)) {
-            throw new Refusal("a time unit that is not a ChronoUnit constant");
+            throw Refusal.untranslatable("a time unit that is not a ChronoUnit constant",
+                    "Name the unit directly, such as ChronoUnit.MINUTES.");
         }
         return ChronoUnit.values()[(int) ir.constantValue(unit)].getDuration().toNanos();
     }
@@ -490,12 +497,15 @@ final class Intrinsics {
     private Val unitsBetween(Val unit, Val from, Val to) {
         var kind = from.type().kind();
         if (kind != to.type().kind() || (kind != Kind.DATE && kind != Kind.DATETIME && kind != Kind.TIME)) {
-            throw new Refusal("ChronoUnit.between on " + from.type() + " and " + to.type());
+            throw Refusal.untranslatable("ChronoUnit.between on a " + from.type() + " and a " + to.type(),
+                    "It translates for two values of the same type: LocalDate, LocalTime or LocalDateTime.");
         }
         long nanos = kind == Kind.TIME ? timeBasedUnitNanos(unit) : unitNanos(unit);
         if (nanos > 7 * NANOS_PER_DAY || kind == Kind.DATE && nanos % NANOS_PER_DAY != 0) {
-            throw new Refusal("ChronoUnit.between in " + ChronoUnit.values()[(int) ir.constantValue(unit)]
-                    + " on a " + from.type());
+            throw Refusal.untranslatable("ChronoUnit." + ChronoUnit.values()[(int) ir.constantValue(unit)]
+                    + ".between on " + from.type() + " values", nanos > 7 * NANOS_PER_DAY
+                    ? "Months, years and longer units have no fixed length; count DAYS or WEEKS instead."
+                    : "A LocalDate has no time of day; count DAYS or WEEKS instead.");
         }
         long perUnit = kind == Kind.DATE ? nanos / NANOS_PER_DAY : nanos;
         return ir.apply("div", Type.LONG, ir.apply("sub", Type.LONG, to, from), ir.constant(Type.LONG, perUnit));
@@ -507,7 +517,8 @@ final class Intrinsics {
     private long timeBasedUnitNanos(Val unit) {
         long nanos = unitNanos(unit);
         if (nanos > NANOS_PER_DAY / 2) {
-            throw new Refusal("until in a date-based unit (only time-based units so far)");
+            throw Refusal.untranslatable("until or between in a unit of a day or longer on a time or a date-time",
+                    "Count in a unit of at most half a day, such as ChronoUnit.HOURS or MINUTES.");
         }
         return nanos;
     }
@@ -518,7 +529,7 @@ final class Intrinsics {
      */
     private static Val requireDuration(Val v) {
         if (v.type().kind() != Kind.DURATION) {
-            throw new Refusal("adding a " + v.type() + " to a date-time");
+            throw Refusal.untranslatable("adding a " + v.type() + " to a date-time", "Add a Duration instead.");
         }
         return v;
     }
@@ -529,7 +540,7 @@ final class Intrinsics {
      */
     private static Val requireList(Val v) {
         if (v.type().kind() != Kind.LIST) {
-            throw new Refusal("a collection method on a " + v.type());
+            throw Refusal.untranslatable("a collection method on a " + v.type(), Constructs.COLLECTION_METHODS);
         }
         return v;
     }

@@ -81,6 +81,6 @@ final class KnownLambdas {
         if (name.equals("notEquals")) {
             return ir.not(ir.apply("eq", Type.BOOL, tuple.get(0), tuple.get(1)));
         }
-        throw new Refusal("the built-in function " + name);
+        throw Refusal.untranslatable("the built-in function " + name, null);
     }
 }

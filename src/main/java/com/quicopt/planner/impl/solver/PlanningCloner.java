@@ -78,8 +78,8 @@ final class PlanningCloner {
         for (Field field : Members.allFields(from.getClass())) {
             if (field.isAnnotationPresent(DeepPlanningClone.class)
                     || field.getType().isAnnotationPresent(DeepPlanningClone.class)) {
-                throw new Refusal("the @DeepPlanningClone field " + from.getClass().getSimpleName() + "."
-                        + field.getName() + " (not cloned yet)");
+                throw new Refusal("the client does not clone the @DeepPlanningClone field "
+                        + from.getClass().getSimpleName() + "." + field.getName() + " yet");
             }
             var value = Members.read(field, from);
             if (holdsEntities(value, clones) == containers) {

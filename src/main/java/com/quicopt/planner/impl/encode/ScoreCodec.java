@@ -88,7 +88,9 @@ public final class ScoreCodec {
         if (scoreClass == HardMediumSoftBigDecimalScore.class) {
             return HardMediumSoftBigDecimalScore.of(d.get(0), d.get(1), d.get(2));
         }
-        throw new Refusal("the score type " + scoreClass.getSimpleName());
+        throw new Refusal("the service does not support the score type " + scoreClass.getSimpleName() + " yet",
+                "The service supports SimpleScore, HardSoftScore and HardMediumSoftScore, and their BigDecimal"
+                + " forms.");
     }
 
     /**

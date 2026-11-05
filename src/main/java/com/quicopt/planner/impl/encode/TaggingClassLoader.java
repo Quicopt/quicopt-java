@@ -61,7 +61,10 @@ public final class TaggingClassLoader extends ClassLoader {
     static byte[] readBytes(ClassLoader loader, String className) {
         try (InputStream in = loader.getResourceAsStream(className.replace('.', '/') + ".class")) {
             if (in == null) {
-                throw new IllegalStateException("No class file for " + className);
+                throw new IllegalStateException("The client cannot read the class file of " + className + ", which"
+                        + " it needs to translate the constraints: the class loader that defined the class does not"
+                        + " give out its bytes. Run the model in an environment whose class loader does, such as a"
+                        + " plain JVM.");
             }
             return in.readAllBytes();
         } catch (IOException e) {
@@ -89,6 +92,7 @@ public final class TaggingClassLoader extends ClassLoader {
     private static final class TaggingVisitor extends ClassVisitor {
 
         private final String className;
+        private String sourceFile;
 
         /**
          * @param next the writer of the rewritten class
@@ -99,10 +103,21 @@ public final class TaggingClassLoader extends ClassLoader {
             this.className = className;
         }
 
+        /**
+         * Keeps the source file's name, for the places of the lambdas the class creates.
+         */
+        @Override
+        public void visitSource(String source, String debug) {
+            sourceFile = source;
+            super.visitSource(source, debug);
+        }
+
         @Override
         public MethodVisitor visitMethod(int access, String name, String desc, String signature,
                 String[] exceptions) {
-            return new TaggingMethodVisitor(super.visitMethod(access, name, desc, signature, exceptions));
+            var method = className.replace('/', '.') + "." + name;
+            return new TaggingMethodVisitor(super.visitMethod(access, name, desc, signature, exceptions), method,
+                    sourceFile);
         }
 
         /**
@@ -129,18 +144,44 @@ public final class TaggingClassLoader extends ClassLoader {
      */
     private static final class TaggingMethodVisitor extends MethodVisitor {
 
+        private final String method;
+        private final String sourceFile;
+        private int line = -1;
+
         /**
          * @param next the writer of the rewritten method
+         * @param method the method's class and name, such as {@code com.example.Rules.roomConflict}
+         * @param sourceFile the class's source file, or {@code null} when the class file does not name it
          */
-        TaggingMethodVisitor(MethodVisitor next) {
+        TaggingMethodVisitor(MethodVisitor next, String method, String sourceFile) {
             super(Opcodes.ASM9, next);
+            this.method = method;
+            this.sourceFile = sourceFile;
+        }
+
+        /**
+         * Keeps the source line the instructions that follow come from.
+         */
+        @Override
+        public void visitLineNumber(int line, org.objectweb.asm.Label start) {
+            this.line = line;
+            super.visitLineNumber(line, start);
+        }
+
+        /**
+         * @return where the current instruction is, as a stack trace prints it
+         */
+        private String place() {
+            var file = sourceFile == null ? "Unknown Source" : line < 0 ? sourceFile : sourceFile + ":" + line;
+            return method + "(" + file + ")";
         }
 
         @Override
         public void visitInvokeDynamicInsn(String name, String desc, Handle bootstrap, Object... args) {
             super.visitInvokeDynamicInsn(name, desc, bootstrap, args);
             if (METAFACTORY.equals(bootstrap.getOwner()) && args.length >= 3 && args[1] instanceof Handle impl) {
-                int site = LambdaRegistry.register(new LambdaRegistry.Site(impl, ((Type) args[2]).getDescriptor()));
+                int site = LambdaRegistry.register(new LambdaRegistry.Site(impl, ((Type) args[2]).getDescriptor(),
+                        place()));
                 super.visitInsn(Opcodes.DUP);
                 super.visitLdcInsn(site);
                 super.visitMethodInsn(Opcodes.INVOKESTATIC, REGISTRY, "tag", "(Ljava/lang/Object;I)V", false);
